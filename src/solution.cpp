@@ -11,8 +11,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s N\n", argv[0]);
         return 1;
     }
+    freopen("out.txt", "w", stdout);
 
     unsigned long n = std::strtoul(argv[1], nullptr, 10);
+
+    printf("n %lu\n", n);
 
     mpz_t f;
     mpz_init(f);
@@ -21,26 +24,26 @@ int main(int argc, char **argv) {
     char *s = mpz_get_str(nullptr, 10, f);
     std::size_t len = std::strlen(s);
 
-    printf("DIGITS %zu\n", len);
+    printf("DIGITS   %zu\n", len);
 
     std::size_t tz = 0;
     while (tz < len && s[len - 1 - tz] == '0')
         tz++;
 
-    printf("ZEROS\n%zu\n", tz);
+    printf("ZEROS    %zu\n", tz);
 
     unsigned long long sum = 0;
     for (std::size_t i = 0; i < len; i++)
         sum += static_cast<unsigned long long>(s[i] - '0');
     printf("DIGITSUM %llu\n", sum);
 
-    printf("HEAD50 ");
+    printf("HEAD50   ");
     for (std::size_t i = 0; i < 50 && i < len; i++)
         std::putchar(s[i]);
     std::putchar('\n');
 
     std::size_t core = len - tz;
-    printf("TAIL50 ");
+    printf("TAIL50   ");
     if (core <= 50) {
         std::fwrite(s, 1, core, stdout);
     } else {
