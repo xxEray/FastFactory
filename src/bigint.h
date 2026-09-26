@@ -7,7 +7,7 @@
 #include "common.h"
 #include "mulmod.h"
 
-const ull B = 100000000000000ull;
+constexpr ull B = 100000000000000ull; // 1e14
 
 ull qpow1(ull x, ull y) {
 	ull ret = 1;
@@ -23,13 +23,12 @@ ull qpow2(ull x, ull y) {
 struct BigInt {
 	std::vector<ull> w;
 	BigInt() : w({0}) {}
-	BigInt(int val) : w({val}) {}
+	BigInt(unsigned val) : w({val}) {}
 	BigInt(const BigInt &) = default;
 	BigInt(BigInt &&) = default;
 	BigInt &operator=(const BigInt &) = default;
 	BigInt &operator=(BigInt &&) = default;
 	void pop_zero() { while(w.size() > 1 && w.back() == 0) w.pop_back(); }
-	BigInt &operator*=(const BigInt &rhs);
 };
 
 std::vector<int> rev[27];
@@ -42,7 +41,7 @@ void get_rev() {
 }
 Trigger rev_trigger(get_rev);
 
-BigInt operator*(const BigInt &x, const BigInt &y) {
+void mul_eq(BigInt &x, BigInt &&y) {
 	int len = x.w.size() + y.w.size();
 	BigInt ans;
 	if(len <= 8) {
@@ -55,11 +54,13 @@ BigInt operator*(const BigInt &x, const BigInt &y) {
 		for(int i = 0; i < len - 1; i++) vec[i + 1] += vec[i] / B, ans.w[i] = vec[i] % B;
 		ans.w[len - 1] = vec[len - 1] % B;
 		ans.pop_zero();
+		std::swap(ans.w, x.w);
 	} else {
 		int lim = 1, width = 0;
 		while(lim < len) lim <<= 1, width++;
-		std::vector<ull> vx = x.w, vy = y.w, ret1(lim), ret2(lim);
-		vx.resize(lim), vy.resize(lim);
+		static std::vector<ull> tmp1, tmp2;
+		x.w.resize(lim), y.w.resize(lim), tmp1 = x.w, tmp2 = y.w;
+		auto &v1 = x.w, &v2 = y.w, &v3 = tmp1, &v4 = tmp2;
 		auto NTT1 = [lim, width](std::vector<ull> &vec) {
 			for(int i = 0; i < lim; i++)
 				if(i < rev[width][i]) std::swap(vec[i], vec[rev[width][i]]);
@@ -76,8 +77,8 @@ BigInt operator*(const BigInt &x, const BigInt &y) {
 				}
 			}
 		};
-		NTT1(vx), NTT1(vy);
-		for(int i = 0; i < lim; i++) ret1[i] = vx[i], mulmod1(ret1[i], vy[i]);
+		NTT1(v3), NTT1(v4);
+		for(int i = 0; i < lim; i++) mulmod1(v3[i], v4[i]);
 		auto iNTT1 = [lim, width](std::vector<ull> &vec) {
 			for(int i = 0; i < lim; i++)
 				if(i < rev[width][i]) std::swap(vec[i], vec[rev[width][i]]);
@@ -96,7 +97,7 @@ BigInt operator*(const BigInt &x, const BigInt &y) {
 			ull inv = qpow1(lim, MOD1 - 2);
 			for(int i = 0; i < lim; i++) mulmod1(vec[i], inv);
 		};
-		iNTT1(ret1);
+		iNTT1(v3);
 		auto NTT2 = [lim, width](std::vector<ull> &vec) {
 			for(int i = 0; i < lim; i++)
 				if(i < rev[width][i]) std::swap(vec[i], vec[rev[width][i]]);
@@ -113,10 +114,8 @@ BigInt operator*(const BigInt &x, const BigInt &y) {
 				}
 			}
 		};
-		vx = x.w, vy = y.w;
-		vx.resize(lim), vy.resize(lim);
-		NTT2(vx), NTT2(vy);
-		for(int i = 0; i < lim; i++) ret2[i] = vx[i], mulmod2(ret2[i], vy[i]);
+		NTT2(v1), NTT2(v2);
+		for(int i = 0; i < lim; i++) mulmod2(v1[i], v2[i]);
 		auto iNTT2 = [lim, width](std::vector<ull> &vec) {
 			for(int i = 0; i < lim; i++)
 				if(i < rev[width][i]) std::swap(vec[i], vec[rev[width][i]]);
@@ -135,25 +134,20 @@ BigInt operator*(const BigInt &x, const BigInt &y) {
 			ull inv = qpow2(lim, MOD2 - 2);
 			for(int i = 0; i < lim; i++) mulmod2(vec[i], inv);
 		};
-		iNTT2(ret2);
+		iNTT2(v1);
 		// CRT: reconstruct c in [0, MOD1*MOD2) from c mod MOD1 and c mod MOD2.
 		// x = r1 + MOD1 * (((r2-r1) * inv(MOD1) mod MOD2)).
 		ull last = 0;
 		for(int i = 0; i < lim; i++) {
-			ull t = (ret2[i] >= ret1[i] ? ret2[i] - ret1[i] : ret2[i] + MOD2 - ret1[i]);
+			ull t = (v1[i] >= v3[i] ? v1[i] - v3[i] : v1[i] + MOD2 - v3[i]);
 			mulmod2(t, INV_MOD1_MOD2);
-			u128 val = static_cast<u128>(ret1[i]) + static_cast<u128>(MOD1) * t;
+			u128 val = static_cast<u128>(v3[i]) + static_cast<u128>(MOD1) * t;
 			val += last;
 			last = val / B;
-			ret1[i] = static_cast<ull>(val % B);
+			v1[i] = static_cast<ull>(val % B);
 		}
-		ans.w = ret1;
-		ans.w.resize(len);
-		ans.pop_zero();
+		x.pop_zero();
 	}
-	return ans;
 }
-
-inline BigInt &BigInt::operator*=(const BigInt &rhs) { return *this = *this * rhs; }
 
 #endif

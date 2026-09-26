@@ -3,17 +3,17 @@
 
 #include "common.h"
 
-const ull MOD1 = 1945555039024054273;
-const ull G1 = 5;
-const ull invG1 = 1167333023414432564;
+constexpr ull MOD1 = 1945555039024054273;
+constexpr ull G1 = 5;
+constexpr ull invG1 = 1167333023414432564;
 static_assert((u128)G1 * invG1 % MOD1 == 1);
 
-const ull MOD2 = 4179340454199820289;
-const ull G2 = 3;
-const ull invG2 = 1393113484733273430;
+constexpr ull MOD2 = 4179340454199820289;
+constexpr ull G2 = 3;
+constexpr ull invG2 = 1393113484733273430;
 static_assert((u128)G2 * invG2 % MOD2 == 1);
 
-const ull INV_MOD1_MOD2 = 3505253284167591212;
+constexpr ull INV_MOD1_MOD2 = 3505253284167591212;
 static_assert((u128)INV_MOD1_MOD2 * MOD1 % MOD2 == 1);
 
 ull trim1(ull x) { return x >= MOD1 ? x - MOD1 : x;  }

@@ -31,8 +31,8 @@ std::string print(const BigInt &x) {
 int main() {
 	std::string a, b;
 	if(!(std::cin >> a >> b)) return 0;
-	BigInt prod = parse(a) * parse(b);
-	prod.pop_zero();
-	std::cout << print(prod) << "\n";
+	BigInt ia = parse(a), ib = parse(b);
+	mul_eq(ia, std::move(ib));
+	std::cout << print(ia) << "\n";
 	return 0;
 }
