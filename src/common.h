@@ -7,6 +7,9 @@
 typedef unsigned long long ull;
 typedef unsigned __int128 u128;
 
+constexpr int LEAF_PIVOT = 32;
+constexpr int OMP_PIVOT = 32768;
+
 #ifdef DEBUG
 #define assert(condition) ((condition) ? (void)0 : \
 	(fprintf(stderr, "Assertion failed at ilne #%d in file " __FILE__ ": " #condition,\

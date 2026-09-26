@@ -1,4 +1,5 @@
 #include <string>
+#include <omp.h>
 #include "bigint.h"
 
 constexpr int STUDENT_ID = 5;
@@ -6,7 +7,11 @@ constexpr int STUDENT_ID = 5;
 constexpr int pow10[] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000};
 
 BigInt get_prod(int l, int r) {
-	if(l == r) return BigInt(l);
+	if(r - l + 1 <= LEAF_PIVOT) {
+		BigInt ret(l);
+		for(int i = l + 1; i <= r; i++) ret *= static_cast<unsigned>(i);
+		return ret;
+	}
 	int mid = (l + r) / 2;
 	BigInt val = get_prod(l, mid);
 	mul_eq(val, get_prod(mid + 1, r));
