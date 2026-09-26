@@ -81,7 +81,8 @@ void mul_eq(BigInt &x, BigInt &&y) {
 		int lim = 1, width = 0;
 		while(lim < len) lim <<= 1, width++;
 		static std::vector<ull> tmp1, tmp2;
-		x.w.resize(lim), y.w.resize(lim), tmp1 = x.w, tmp2 = y.w;
+		x.w.resize(lim), y.w.resize(lim), tmp1 = x.w;
+		if(lim < (1 << 26)) tmp2 = y.w;
 		auto &v1 = x.w, &v2 = y.w, &v3 = tmp1, &v4 = tmp2;
 #ifdef SPEED
 		SpeedRec &sr = speed_rec[lim];
@@ -176,9 +177,7 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			DIT2(v1);
 			SPEED_TICK(t7);
 			SPEED_ADD(intt, t6, t7);
-			// CRT: reconstruct c in [0, MOD1*MOD2) from c mod MOD1 and c mod MOD2.
-			// x = r1 + MOD1 * (((r2-r1) * inv(MOD1) mod MOD2)).
-		} else {
+		} else if(lim < (1 << 26)) {
 			auto DIF1 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
 				{
@@ -281,10 +280,114 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			DIT2(v1);
 			SPEED_TICK(t7);
 			SPEED_ADD(intt, t6, t7);
-			// CRT: reconstruct c in [0, MOD1*MOD2) from c mod MOD1 and c mod MOD2.
-			// x = r1 + MOD1 * (((r2-r1) * inv(MOD1) mod MOD2)).
+		} else {
+			auto DIF1 = [lim, width](std::vector<ull> &vec) {
+				#pragma omp parallel
+				{
+					for(int i = (lim >> 1), cn = width; i >= 1; i >>= 1, cn--) {
+						ull wn = wn1[cn];
+						#pragma omp for
+						for(int j = 0; j < lim; j += (i << 1)) {
+							ull w = R_MOD1; // to_mont1(1)
+							for(int k = 0; k < i; k++, mulmod1(w, wn)) {
+								ull x = vec[j + k], y = vec[j + i + k];
+								vec[j + k] = trim1(x + y);
+								vec[j + i + k] = (x >= y ? x - y : x + MOD1 - y);
+								mulmod1(vec[j + i + k], w);
+							}
+						}
+					}
+				}
+			};
+			SPEED_TICK(t0);
+			#pragma omp parallel for
+			for(int i = 0; i < lim; i++) to_mont1(v3[i]), to_mont1(v2[i]);
+			DIF1(v3), DIF1(v2);
+			SPEED_TICK(t1);
+			SPEED_ADD(ntt, t0, t1);
+			#pragma omp parallel for
+			for(int i = 0; i < lim; i++) mulmod1(v3[i], v2[i]);
+			auto DIT1 = [lim, width](std::vector<ull> &vec) {
+				#pragma omp parallel
+				{
+					for(int i = 1, cn = 1; i < lim; i <<= 1, cn++) {
+						ull wn = iwn1[cn];
+						#pragma omp for
+						for(int j = 0; j < lim; j += (i << 1)) {
+							ull w = R_MOD1;
+							for(int k = 0; k < i; k++, mulmod1(w, wn)) {
+								ull x = vec[j + k], y = vec[j + i + k];
+								mulmod1(y, w);
+								vec[j + k] = trim1(x + y);
+								vec[j + i + k] = (x >= y ? x - y : x + MOD1 - y);
+							}
+						}
+					}
+				}
+				ull inv = invlim1[width];
+				#pragma omp parallel for
+				for(int i = 0; i < lim; i++) mulmod1(vec[i], inv);
+			};
+			SPEED_TICK(t2);
+			DIT1(v3), DIT1(v2);
+			SPEED_TICK(t3);
+			SPEED_ADD(intt, t2, t3);
+			auto DIF2 = [lim, width](std::vector<ull> &vec) {
+				#pragma omp parallel
+				{
+					for(int i = (lim >> 1), cn = width; i >= 1; i >>= 1, cn--) {
+						ull wn = wn2[cn];
+						#pragma omp for
+						for(int j = 0; j < lim; j += (i << 1)) {
+							ull w = R_MOD2;
+							for(int k = 0; k < i; k++, mulmod2(w, wn)) {
+								ull x = vec[j + k], y = vec[j + i + k];
+								vec[j + k] = trim2(x + y);
+								vec[j + i + k] = (x >= y ? x - y : x + MOD2 - y);
+								mulmod2(vec[j + i + k], w);
+							}
+						}
+					}
+				}
+			};
+			SPEED_TICK(t4);
+			#pragma omp parallel for
+			for(int i = 0; i < lim; i++)
+				from_mont1(v2[i]), to_mont2(v1[i]), to_mont2(v2[i]);
+			DIF2(v1), DIF2(v2);
+			SPEED_TICK(t5);
+			SPEED_ADD(ntt, t4, t5);
+			#pragma omp parallel for
+			for(int i = 0; i < lim; i++) mulmod2(v1[i], v2[i]);
+			auto DIT2 = [lim, width](std::vector<ull> &vec) {
+				#pragma omp parallel
+				{
+					for(int i = 1, cn = 1; i < lim; i <<= 1, cn++) {
+						ull wn = iwn2[cn];
+						#pragma omp for
+						for(int j = 0; j < lim; j += (i << 1)) {
+							ull w = R_MOD2;
+							for(int k = 0; k < i; k++, mulmod2(w, wn)) {
+								ull x = vec[j + k], y = vec[j + i + k];
+								mulmod2(y, w);
+								vec[j + k] = trim2(x + y);
+								vec[j + i + k] = (x >= y ? x - y : x + MOD2 - y);
+							}
+						}
+					}
+				}
+				ull inv = invlim2[width];
+				#pragma omp parallel for
+				for(int i = 0; i < lim; i++) mulmod2(vec[i], inv);
+			};
+			SPEED_TICK(t6);
+			DIT2(v1);
+			SPEED_TICK(t7);
+			SPEED_ADD(intt, t6, t7);
 		}
 		SPEED_TICK(t8);
+		// CRT: reconstruct c in [0, MOD1*MOD2) from c mod MOD1 and c mod MOD2.
+		// x = r1 + MOD1 * (((r2-r1) * inv(MOD1) mod MOD2)).
 		u128 last = 0;
 		for(int i = 0; i < lim; i++) {
 			from_mont1(v3[i]), from_mont2(v1[i]);
