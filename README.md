@@ -271,8 +271,7 @@ $$
 根据 Legendre 公式：
 
 $$
-v_5(n!)
-=
+v_5(n!)=
 \left\lfloor\frac n5\right\rfloor+
 \left\lfloor\frac n{25}\right\rfloor+
 \left\lfloor\frac n{125}\right\rfloor+\cdots
@@ -403,8 +402,6 @@ Peak RSS = 2052.90 MB
 ```
 
 在 3 GB 限制内完成计算。
-
----
 
 ## 7. 关于 AI 使用
 
