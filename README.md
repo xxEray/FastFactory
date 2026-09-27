@@ -76,7 +76,7 @@ FastFactory/
 直接编译 `src/solution.cpp`：
 
 ```bash
-g++ src/solution.cpp -o solution -Ofast -fopenmp
+g++ src/solution.cpp -o solution -Ofast -fopenmp -march=native
 ```
 
 运行时传入 `n`：

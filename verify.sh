@@ -26,7 +26,7 @@ run_in_env() {
 }
 
 echo "Building verify.exe ..."
-run_in_env g++ src/verify.cpp -o verify.exe -Ofast -fopenmp
+run_in_env g++ src/verify.cpp -o verify.exe -Ofast -fopenmp -march=native
 
 for k in 4 5 6 7 8; do
 	echo "Running verify.exe $k ..."

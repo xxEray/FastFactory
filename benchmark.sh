@@ -29,7 +29,7 @@ run_in_env() {
 }
 
 echo "Building solution ..."
-run_in_env g++ src/solution.cpp -o solution -Ofast -fopenmp
+run_in_env g++ src/solution.cpp -o solution -Ofast -fopenmp -march=native
 
 : > "$OUT"
 trap 'rm -f "$TMP_OUT" "$TMP_TIME"' EXIT

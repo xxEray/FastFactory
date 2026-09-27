@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -O3 -march=native -fopenmp -std=c++17
+CXXFLAGS = -Ofast -march=native -fopenmp -std=c++17
 TARGET = solution
 
 all: $(TARGET)
