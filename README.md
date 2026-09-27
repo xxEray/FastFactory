@@ -52,11 +52,6 @@ student_id = 5
 目录结构：
 
 ```
-## 3. 项目结构
-
-项目目录结构如下：
-
-```text
 FastFactory/
 ├── src/
 │   ├── bigint.h          # 大整数实现及乘法
