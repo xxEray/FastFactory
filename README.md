@@ -411,6 +411,7 @@ Peak RSS = 2052.90 MB
 
 * `verify.sh`、`benchmark.sh`、Dockerfile、Makefile 等辅助工具
 * `speed.h` 中与性能测试相关的部分
+* `verify.cpp` 中与正确性测试相关的部分
 * README 的结构与措辞润色
 * 算法优化方向的讨论与参考
 * 部分代码 Debug
