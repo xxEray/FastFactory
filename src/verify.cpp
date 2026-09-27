@@ -166,22 +166,15 @@ long long bigint_trailing_zeros(const BigInt &x) {
 
 int main(int argc, char *argv[]) {
 
-    if (argc != 2 ||
-        argv[1][0] < '4' ||
-        argv[1][0] > '8' ||
-        argv[1][1] != 0) {
-
-        fprintf(stderr, "Usage: %s [k]\n", argv[0]);
-        return 1;
-    }
-
-    int k = argv[1][0] - '0';
-    int n = pow10[k] + STUDENT_ID * 1000;
+	int n;
+	if(argc != 2 || sscanf(argv[1], "%d", &n) != 1) {
+		fprintf(stderr, "Usage: %s [n]", argv[0]);
+		return 1;
+	}
 
     printf("========================================\n");
     printf("Verification\n");
     printf("========================================\n");
-    printf("k = %d\n", k);
     printf("n = %d\n", n);
     printf("\n");
 

@@ -76,13 +76,13 @@ FastFactory/
 直接编译 `src/solution.cpp`：
 
 ```bash
-g++ src/solution.cpp -o solution.exe -Ofast -fopenmp
+g++ src/solution.cpp -o solution -Ofast -fopenmp
 ```
 
-运行时传入 `k`：
+运行时传入 `n`：
 
 ```bash
-./solution.exe 4
+./solution 15000
 ```
 
 ### 3.2 Make
@@ -96,7 +96,7 @@ make
 然后运行：
 
 ```bash
-./solution.exe 8
+./solution 15000
 ```
 
 ### 3.3 Docker 自动测试
@@ -153,7 +153,7 @@ fingerprint.txt
 示例：
 
 ```bash
-/usr/bin/time -f 'Time: %es\nMemory: %M' ./solution.exe 8
+/usr/bin/time -f 'Time: %es\nMemory: %M' ./solution 15000
 ```
 
 其中：

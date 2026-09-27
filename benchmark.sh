@@ -28,15 +28,15 @@ run_in_env() {
 	fi
 }
 
-echo "Building solution.exe ..."
-run_in_env g++ src/solution.cpp -o solution.exe -Ofast -fopenmp
+echo "Building solution ..."
+run_in_env g++ src/solution.cpp -o solution -Ofast -fopenmp
 
 : > "$OUT"
 trap 'rm -f "$TMP_OUT" "$TMP_TIME"' EXIT
 
 for k in 4 5 6 7 8; do
 	echo "Running k=$k ..."
-	run_in_env bash -c "/usr/bin/time -f 'Time: %es\nMemory: %M' ./solution.exe $k > .fingerprint.stdout 2> .fingerprint.time"
+	run_in_env bash -c "/usr/bin/time -f 'Time: %es\nMemory: %M' ./solution $((10 ** k + 5000)) > .fingerprint.stdout 2> .fingerprint.time"
 	{
 		printf 'k=%s, n=%s\n' "$k" "$((10 ** k + 5000))"
 		cat "$TMP_OUT"

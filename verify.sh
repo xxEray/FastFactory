@@ -30,5 +30,5 @@ run_in_env g++ src/verify.cpp -o verify.exe -Ofast -fopenmp
 
 for k in 4 5 6 7 8; do
 	echo "Running verify.exe $k ..."
-	run_in_env ./verify.exe "$k"
+	run_in_env ./verify.exe "$((10 ** k + 5000))"
 done
