@@ -44,6 +44,7 @@ struct BigInt {
 
 ull invlim1[27], invlim2[27];
 ull wn1[27], iwn1[27], wn2[27], iwn2[27];
+ull tw1[LOG2_OMP_PIVOT][OMP_PIVOT], tw2[LOG2_OMP_PIVOT][OMP_PIVOT];
 void get_wn() {
 	for(int w = 0; w < 27; w++) {
 		// rev[w].resize(1 << w);
@@ -56,6 +57,18 @@ void get_wn() {
 		iwn1[w] = qpow1(invG1_R, (MOD1 - 1) / (1 << w));
 		wn2[w] = qpow2(G2_R, (MOD2 - 1) / (1 << w));
 		iwn2[w] = qpow2(invG2_R, (MOD2 - 1) / (1 << w));
+	}
+	for(int w = 0; w < LOG2_OMP_PIVOT; w++) {
+		auto calc1 = [w](ull vec[OMP_PIVOT], ull wn) {
+			vec[0] = R_MOD1;
+			for(int i = 1; i < OMP_PIVOT; i++) vec[i] = vec[i - 1], mulmod1(vec[i], wn);
+		};
+		auto calc2 = [w](ull vec[OMP_PIVOT], ull wn) {
+			vec[0] = R_MOD2;
+			for(int i = 1; i < OMP_PIVOT; i++) vec[i] = vec[i - 1], mulmod2(vec[i], wn);
+		};
+		calc1(tw1[w], wn1[w]);
+		calc2(tw2[w], wn2[w]);
 	}
 }
 Trigger rev_trigger(get_wn);
@@ -92,25 +105,30 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			auto DIF1 = [lim, width](std::vector<ull> &vec) {
 				{
 					for(int i = (lim >> 1), cn = width; i >= 1; i >>= 1, cn--) {
-						ull wn = wn1[cn];
+						// ull wn = wn1[cn];
 						for(int j = 0; j < lim; j += (i << 1)) {
-							ull w = R_MOD1; // to_mont1(1)
-							for(int k = 0; k < i; k++, mulmod1(w, wn)) {
+							// ull w = R_MOD1; // to_mont1(1)
+							for(int k = 0; k < i; k++/* , mulmod1(w, wn) */) {
 								ull x = vec[j + k], y = vec[j + i + k];
 								vec[j + k] = trim1(x + y);
 								vec[j + i + k] = (x >= y ? x - y : x + MOD1 - y);
-								mulmod1(vec[j + i + k], w);
+								mulmod1(vec[j + i + k], tw1[cn][k]);
 							}
 						}
 					}
 				}
 			};
-			SPEED_TICK(t0);
+			SPEED_TICK(a0);
 			for(int i = 0; i < lim; i++) to_mont1(v3[i]), to_mont1(v4[i]);
+			SPEED_TICK(a1);
+			SPEED_ADD(to_mont, a0, a1);
 			DIF1(v3), DIF1(v4);
-			SPEED_TICK(t1);
-			SPEED_ADD(ntt, t0, t1);
+			SPEED_TICK(a2);
+			SPEED_ADD(dif, a1, a2);
+			SPEED_TICK(a3);
 			for(int i = 0; i < lim; i++) mulmod1(v3[i], v4[i]);
+			SPEED_TICK(a4);
+			SPEED_ADD(pointwise, a3, a4);
 			auto DIT1 = [lim, width](std::vector<ull> &vec) {
 				{
 					for(int i = 1, cn = 1; i < lim; i <<= 1, cn++) {
@@ -129,32 +147,37 @@ void mul_eq(BigInt &x, BigInt &&y) {
 				ull inv = invlim1[width];
 				for(int i = 0; i < lim; i++) mulmod1(vec[i], inv);
 			};
-			SPEED_TICK(t2);
+			SPEED_TICK(a5);
 			DIT1(v3);
-			SPEED_TICK(t3);
-			SPEED_ADD(intt, t2, t3);
+			SPEED_TICK(a6);
+			SPEED_ADD(dit, a5, a6);
 			auto DIF2 = [lim, width](std::vector<ull> &vec) {
 				{
 					for(int i = (lim >> 1), cn = width; i >= 1; i >>= 1, cn--) {
-						ull wn = wn2[cn];
+						// ull wn = wn2[cn];
 						for(int j = 0; j < lim; j += (i << 1)) {
-							ull w = R_MOD2;
-							for(int k = 0; k < i; k++, mulmod2(w, wn)) {
+							// ull w = R_MOD2;
+							for(int k = 0; k < i; k++/* , mulmod2(w, wn) */) {
 								ull x = vec[j + k], y = vec[j + i + k];
 								vec[j + k] = trim2(x + y);
 								vec[j + i + k] = (x >= y ? x - y : x + MOD2 - y);
-								mulmod2(vec[j + i + k], w);
+								mulmod2(vec[j + i + k], tw2[cn][k]);
 							}
 						}
 					}
 				}
 			};
-			SPEED_TICK(t4);
+			SPEED_TICK(b0);
 			for(int i = 0; i < lim; i++) to_mont2(v1[i]), to_mont2(v2[i]);
+			SPEED_TICK(b1);
+			SPEED_ADD(to_mont, b0, b1);
 			DIF2(v1), DIF2(v2);
-			SPEED_TICK(t5);
-			SPEED_ADD(ntt, t4, t5);
+			SPEED_TICK(b2);
+			SPEED_ADD(dif, b1, b2);
+			SPEED_TICK(b3);
 			for(int i = 0; i < lim; i++) mulmod2(v1[i], v2[i]);
+			SPEED_TICK(b4);
+			SPEED_ADD(pointwise, b3, b4);
 			auto DIT2 = [lim, width](std::vector<ull> &vec) {
 				{
 					for(int i = 1, cn = 1; i < lim; i <<= 1, cn++) {
@@ -173,10 +196,10 @@ void mul_eq(BigInt &x, BigInt &&y) {
 				ull inv = invlim2[width];
 				for(int i = 0; i < lim; i++) mulmod2(vec[i], inv);
 			};
-			SPEED_TICK(t6);
+			SPEED_TICK(b5);
 			DIT2(v1);
-			SPEED_TICK(t7);
-			SPEED_ADD(intt, t6, t7);
+			SPEED_TICK(b6);
+			SPEED_ADD(dit, b5, b6);
 		} else if(lim < (1 << 26)) {
 			auto DIF1 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
@@ -196,14 +219,19 @@ void mul_eq(BigInt &x, BigInt &&y) {
 					}
 				}
 			};
-			SPEED_TICK(t0);
+			SPEED_TICK(a0);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++) to_mont1(v3[i]), to_mont1(v4[i]);
+			SPEED_TICK(a1);
+			SPEED_ADD(to_mont, a0, a1);
 			DIF1(v3), DIF1(v4);
-			SPEED_TICK(t1);
-			SPEED_ADD(ntt, t0, t1);
+			SPEED_TICK(a2);
+			SPEED_ADD(dif, a1, a2);
+			SPEED_TICK(a3);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++) mulmod1(v3[i], v4[i]);
+			SPEED_TICK(a4);
+			SPEED_ADD(pointwise, a3, a4);
 			auto DIT1 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
 				{
@@ -225,10 +253,10 @@ void mul_eq(BigInt &x, BigInt &&y) {
 				#pragma omp parallel for
 				for(int i = 0; i < lim; i++) mulmod1(vec[i], inv);
 			};
-			SPEED_TICK(t2);
+			SPEED_TICK(a5);
 			DIT1(v3);
-			SPEED_TICK(t3);
-			SPEED_ADD(intt, t2, t3);
+			SPEED_TICK(a6);
+			SPEED_ADD(dit, a5, a6);
 			auto DIF2 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
 				{
@@ -247,14 +275,19 @@ void mul_eq(BigInt &x, BigInt &&y) {
 					}
 				}
 			};
-			SPEED_TICK(t4);
+			SPEED_TICK(b0);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++) to_mont2(v1[i]), to_mont2(v2[i]);
+			SPEED_TICK(b1);
+			SPEED_ADD(to_mont, b0, b1);
 			DIF2(v1), DIF2(v2);
-			SPEED_TICK(t5);
-			SPEED_ADD(ntt, t4, t5);
+			SPEED_TICK(b2);
+			SPEED_ADD(dif, b1, b2);
+			SPEED_TICK(b3);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++) mulmod2(v1[i], v2[i]);
+			SPEED_TICK(b4);
+			SPEED_ADD(pointwise, b3, b4);
 			auto DIT2 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
 				{
@@ -276,10 +309,10 @@ void mul_eq(BigInt &x, BigInt &&y) {
 				#pragma omp parallel for
 				for(int i = 0; i < lim; i++) mulmod2(vec[i], inv);
 			};
-			SPEED_TICK(t6);
+			SPEED_TICK(b5);
 			DIT2(v1);
-			SPEED_TICK(t7);
-			SPEED_ADD(intt, t6, t7);
+			SPEED_TICK(b6);
+			SPEED_ADD(dit, b5, b6);
 		} else {
 			auto DIF1 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
@@ -299,14 +332,19 @@ void mul_eq(BigInt &x, BigInt &&y) {
 					}
 				}
 			};
-			SPEED_TICK(t0);
+			SPEED_TICK(a0);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++) to_mont1(v3[i]), to_mont1(v2[i]);
+			SPEED_TICK(a1);
+			SPEED_ADD(to_mont, a0, a1);
 			DIF1(v3), DIF1(v2);
-			SPEED_TICK(t1);
-			SPEED_ADD(ntt, t0, t1);
+			SPEED_TICK(a2);
+			SPEED_ADD(dif, a1, a2);
+			SPEED_TICK(a3);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++) mulmod1(v3[i], v2[i]);
+			SPEED_TICK(a4);
+			SPEED_ADD(pointwise, a3, a4);
 			auto DIT1 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
 				{
@@ -328,10 +366,10 @@ void mul_eq(BigInt &x, BigInt &&y) {
 				#pragma omp parallel for
 				for(int i = 0; i < lim; i++) mulmod1(vec[i], inv);
 			};
-			SPEED_TICK(t2);
+			SPEED_TICK(a5);
 			DIT1(v3), DIT1(v2);
-			SPEED_TICK(t3);
-			SPEED_ADD(intt, t2, t3);
+			SPEED_TICK(a6);
+			SPEED_ADD(dit, a5, a6);
 			auto DIF2 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
 				{
@@ -350,15 +388,20 @@ void mul_eq(BigInt &x, BigInt &&y) {
 					}
 				}
 			};
-			SPEED_TICK(t4);
+			SPEED_TICK(b0);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++)
 				from_mont1(v2[i]), to_mont2(v1[i]), to_mont2(v2[i]);
+			SPEED_TICK(b1);
+			SPEED_ADD(to_mont, b0, b1);
 			DIF2(v1), DIF2(v2);
-			SPEED_TICK(t5);
-			SPEED_ADD(ntt, t4, t5);
+			SPEED_TICK(b2);
+			SPEED_ADD(dif, b1, b2);
+			SPEED_TICK(b3);
 			#pragma omp parallel for
 			for(int i = 0; i < lim; i++) mulmod2(v1[i], v2[i]);
+			SPEED_TICK(b4);
+			SPEED_ADD(pointwise, b3, b4);
 			auto DIT2 = [lim, width](std::vector<ull> &vec) {
 				#pragma omp parallel
 				{
@@ -380,10 +423,10 @@ void mul_eq(BigInt &x, BigInt &&y) {
 				#pragma omp parallel for
 				for(int i = 0; i < lim; i++) mulmod2(vec[i], inv);
 			};
-			SPEED_TICK(t6);
+			SPEED_TICK(b5);
 			DIT2(v1);
-			SPEED_TICK(t7);
-			SPEED_ADD(intt, t6, t7);
+			SPEED_TICK(b6);
+			SPEED_ADD(dit, b5, b6);
 		}
 		SPEED_TICK(t8);
 		// CRT: reconstruct c in [0, MOD1*MOD2) from c mod MOD1 and c mod MOD2.
@@ -392,7 +435,8 @@ void mul_eq(BigInt &x, BigInt &&y) {
 		for(int i = 0; i < lim; i++) {
 			from_mont1(v3[i]), from_mont2(v1[i]);
 			ull t = (v1[i] >= v3[i] ? v1[i] - v3[i] : v1[i] + MOD2 - v3[i]);
-			t = static_cast<u128>(t) * INV_MOD1_MOD2 % MOD2;
+			// t = static_cast<u128>(t) * INV_MOD1_MOD2 % MOD2;
+			mulmod2(t, INV_MOD1_MOD2_R);
 			u128 val = static_cast<u128>(v3[i]) + static_cast<u128>(MOD1) * t;
 			val += last;
 			last = val / B;

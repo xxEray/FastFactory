@@ -27,6 +27,7 @@ static_assert((u128)G2 * invG2 % MOD2 == 1);
 
 constexpr ull INV_MOD1_MOD2 = 3505253284167591212;
 static_assert((u128)INV_MOD1_MOD2 * MOD1 % MOD2 == 1);
+constexpr ull INV_MOD1_MOD2_R = (static_cast<u128>(INV_MOD1_MOD2) << 64) % MOD2;
 
 ull trim1(ull x) { return x >= MOD1 ? x - MOD1 : x;  }
 void mulmod1(ull &x, ull y) {

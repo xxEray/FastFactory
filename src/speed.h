@@ -14,7 +14,7 @@
 #endif
 
 struct SpeedRec {
-	long long ntt = 0, intt = 0, crt = 0, calls = 0;
+	long long to_mont = 0, dif = 0, pointwise = 0, dit = 0, crt = 0, calls = 0;
 };
 std::map<int, SpeedRec> speed_rec;
 
@@ -25,17 +25,20 @@ struct SpeedDump {
 	~SpeedDump() {
 		FILE *fp = fopen("speed.txt", "w");
 		if(!fp) return;
-		fprintf(fp, "%12s%16s%16s%16s%14s\n", "lim", "ntt(ms)", "intt(ms)", "crt(ms)", "calls");
-		long long ntt = 0, intt = 0, crt = 0, calls = 0;
+		fprintf(fp, "%12s%16s%16s%16s%16s%16s%14s\n", "lim", "to_mont(ms)", "dif(ms)", "point(ms)", "dit(ms)", "crt(ms)", "calls");
+		long long to_mont = 0, dif = 0, pointwise = 0, dit = 0, crt = 0, calls = 0;
 		for(const auto &it : speed_rec) {
 			if(it.first == 0) fprintf(fp, "%12s", "small");
 			else fprintf(fp, "%12d", it.first);
-			fprintf(fp, "%16.3f%16.3f%16.3f%14lld\n", it.second.ntt / 1e6,
-				it.second.intt / 1e6, it.second.crt / 1e6, it.second.calls);
-			ntt += it.second.ntt, intt += it.second.intt;
+			fprintf(fp, "%16.3f%16.3f%16.3f%16.3f%16.3f%14lld\n", it.second.to_mont / 1e6,
+				it.second.dif / 1e6, it.second.pointwise / 1e6, it.second.dit / 1e6,
+				it.second.crt / 1e6, it.second.calls);
+			to_mont += it.second.to_mont, dif += it.second.dif;
+			pointwise += it.second.pointwise, dit += it.second.dit;
 			crt += it.second.crt, calls += it.second.calls;
 		}
-		fprintf(fp, "%12s%16.3f%16.3f%16.3f%14lld\n", "TOTAL", ntt / 1e6, intt / 1e6, crt / 1e6, calls);
+		fprintf(fp, "%12s%16.3f%16.3f%16.3f%16.3f%16.3f%14lld\n", "TOTAL", to_mont / 1e6,
+			dif / 1e6, pointwise / 1e6, dit / 1e6, crt / 1e6, calls);
 		fprintf(fp, "prod(ms) %.3f\n", prod / 1e6);
 		fprintf(fp, "output(ms) %.3f\n", output / 1e6);
 		auto end = std::chrono::steady_clock::now();
