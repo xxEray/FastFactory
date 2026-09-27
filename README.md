@@ -49,6 +49,31 @@ student_id = 5
 
 大整数采用 `10^14` 作为进制，每个 limb 使用 `uint64_t` 存储，从而减少超大整数所需的 limb 数量。
 
+目录结构：
+
+```
+## 3. 项目结构
+
+项目目录结构如下：
+
+```text
+FastFactory/
+├── src/
+│   ├── bigint.h          # 大整数实现及乘法
+│   ├── common.h          # 公共类型、常量及辅助函数
+│   ├── mulmod.h          # 模乘及 Montgomery Reduction
+│   ├── solution.cpp      # 主程序及 Product Tree
+│   ├── speed.h           # 性能测试及计时相关代码
+│   └── verify.cpp        # 独立正确性验证程序
+│
+├── benchmark.sh          # 自动编译并测试 k=4~8，生成 fingerprint.txt
+├── verify.sh              # 自动执行独立正确性验证
+├── Makefile               # Linux 下的编译入口
+├── Dockerfile             # 统一测试环境
+├── fingerprint.txt        # 各个 k 的结果指纹、用时及峰值内存
+└── README.md              # 项目说明、算法介绍及测试结果
+```
+
 ## 3. 编译与运行
 
 ### 3.1 直接编译运行
@@ -319,7 +344,7 @@ independent n! mod p
 
 **【补充】** 后两种验证方法可以通过运行 `verify.sh` 自动完成。
 
-### 5.6 为什么可以相信 7.6 亿位结果？
+### 5.4 为什么可以相信 7.6 亿位结果？
 
 本项目的正确性并不是建立在“把 7.6 亿位数字全部看一遍”的基础上，而是建立在多种独立检查之上，其中最重要的是多模数验证。
 
