@@ -8,6 +8,7 @@ typedef unsigned long long ull;
 typedef unsigned __int128 u128;
 
 constexpr int LEAF_PIVOT = 32;
+constexpr int BF_PIVOT = 128;
 constexpr int OMP_PIVOT = 32768;
 
 #ifdef DEBUG

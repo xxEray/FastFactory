@@ -19,6 +19,7 @@ struct SpeedRec {
 std::map<int, SpeedRec> speed_rec;
 
 struct SpeedDump {
+	long long prod = 0, output = 0;
 	std::chrono::steady_clock::time_point start;
 	SpeedDump() : start(std::chrono::steady_clock::now()) {}
 	~SpeedDump() {
@@ -35,6 +36,8 @@ struct SpeedDump {
 			crt += it.second.crt, calls += it.second.calls;
 		}
 		fprintf(fp, "%12s%16.3f%16.3f%16.3f%14lld\n", "TOTAL", ntt / 1e6, intt / 1e6, crt / 1e6, calls);
+		fprintf(fp, "prod(ms) %.3f\n", prod / 1e6);
+		fprintf(fp, "output(ms) %.3f\n", output / 1e6);
 		auto end = std::chrono::steady_clock::now();
 		double total_ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(end - start).count();
 		fprintf(fp, "total(ms) %.3f\n", total_ms);
@@ -51,9 +54,12 @@ SpeedDump speed_dump;
 #define SPEED_TICK(name) auto name = std::chrono::steady_clock::now()
 #define SPEED_ADD(field, from, to) sr.field += \
 	std::chrono::duration_cast<std::chrono::nanoseconds>((to) - (from)).count()
+#define SPEED_ADD_TOTAL(field, from, to) speed_dump.field += \
+	std::chrono::duration_cast<std::chrono::nanoseconds>((to) - (from)).count()
 #else
 #define SPEED_TICK(name) ((void)0)
 #define SPEED_ADD(field, from, to) ((void)0)
+#define SPEED_ADD_TOTAL(field, from, to) ((void)0)
 #endif
 
 #endif

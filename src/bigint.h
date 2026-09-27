@@ -63,7 +63,7 @@ Trigger rev_trigger(get_wn);
 void mul_eq(BigInt &x, BigInt &&y) {
 	int len = x.w.size() + y.w.size();
 	BigInt ans;
-	if(len <= LEAF_PIVOT) {
+	if(len <= BF_PIVOT) {
 #ifdef SPEED
 		++speed_rec[0].calls;
 #endif
