@@ -1,24 +1,13 @@
 #include <string>
 #include <omp.h>
 #include "bigint.h"
+#include "primeswing.h"
 
 constexpr int LIMB_DIGITS = 14;
 
 std::string pad14(ull x) {
 	std::string t = std::to_string(x);
 	return std::string(LIMB_DIGITS - t.size(), '0') + t;
-}
-
-BigInt get_prod(int l, int r) {
-	if(r - l + 1 <= LEAF_PIVOT) {
-		BigInt ret(l);
-		for(int i = l + 1; i <= r; i++) ret *= static_cast<unsigned>(i);
-		return ret;
-	}
-	int mid = (l + r) / 2;
-	BigInt val = get_prod(l, mid);
-	mul_eq(val, get_prod(mid + 1, r));
-	return val;
 }
 
 int main(int argc, char *argv[]) {
@@ -28,7 +17,8 @@ int main(int argc, char *argv[]) {
 		return 1;
 	}
 	SPEED_TICK(tp0);
-	auto ans = get_prod(1, n);
+	sieve(n);
+	auto ans = factorial(n);
 	SPEED_TICK(tp1);
 	SPEED_ADD_TOTAL(prod, tp0, tp1);
 	const auto &w = ans.w;

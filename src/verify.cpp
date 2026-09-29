@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "bigint.h"
+#include "primeswing.h"
 
 using ull = unsigned long long;
 using u128 = __uint128_t;
@@ -38,27 +39,6 @@ constexpr ull VERIFY_PRIMES[] = {
 
 constexpr int PRIME_COUNT =
     sizeof(VERIFY_PRIMES) / sizeof(VERIFY_PRIMES[0]);
-
-
-// ------------------------------------------------------------
-// Product Tree
-// ------------------------------------------------------------
-
-BigInt get_prod(int l, int r) {
-    if (r - l + 1 <= LEAF_PIVOT) {
-        BigInt ret(l);
-        for (int i = l + 1; i <= r; i++)
-            ret *= static_cast<unsigned>(i);
-        return ret;
-    }
-
-    int mid = (l + r) / 2;
-
-    BigInt val = get_prod(l, mid);
-    mul_eq(val, get_prod(mid + 1, r));
-
-    return val;
-}
 
 
 // ------------------------------------------------------------
@@ -184,7 +164,8 @@ int main(int argc, char *argv[]) {
 
     printf("[1] Computing n! ...\n");
 
-    BigInt ans = get_prod(1, n);
+	sieve(n);
+	auto ans = factorial(n);
 
     printf("    computation finished.\n");
     printf("\n");

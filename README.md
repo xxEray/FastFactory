@@ -38,7 +38,7 @@ student_id = 5
 
 核心方法包括：
 
-* Product Tree 分治计算阶乘
+* PrimeSwing + Product Tree 分治计算阶乘
 * `10^14` 进制大整数压位
 * 双模数 NTT
 * CRT 重构
@@ -57,16 +57,19 @@ FastFactory/
 │   ├── bigint.h          # 大整数实现及乘法
 │   ├── common.h          # 公共类型、常量及辅助函数
 │   ├── mulmod.h          # 模乘及 Montgomery Reduction
-│   ├── solution.cpp      # 主程序及 Product Tree
+│   ├── primeswing.h      # 实现 PrimeSwing + Product Tree
+│   ├── solution.cpp      # 主程序
 │   ├── speed.h           # 性能测试及计时相关代码
 │   └── verify.cpp        # 独立正确性验证程序
 │
 ├── benchmark.sh          # 自动编译并测试 k=4~8，生成 fingerprint.txt
-├── verify.sh              # 自动执行独立正确性验证
-├── Makefile               # Linux 下的编译入口
-├── Dockerfile             # 统一测试环境
-├── fingerprint.txt        # 各个 k 的结果指纹、用时及峰值内存
-└── README.md              # 项目说明、算法介绍及测试结果
+├── extreme_test.sh       # 自动极限测试 n=3e8
+├── extreme_test.txt      # 极限测试 n=3e8 的结果
+├── verify.sh             # 自动执行独立正确性验证
+├── Makefile              # Linux 下的编译入口
+├── Dockerfile            # 统一测试环境
+├── fingerprint.txt       # 各个 k 的结果指纹、用时及峰值内存
+└── README.md             # 项目说明、算法介绍及测试结果
 ```
 
 ## 3. 编译与运行
@@ -106,7 +109,7 @@ make
 构建镜像：
 
 ```bash
-docker build -t judger-cpp:13 .
+docker build -t judge-cpp:13 .
 ```
 
 然后运行：
@@ -185,12 +188,12 @@ Docker 中使用：
 在上述固定测试环境下得到：
 
 |  k |           n |       用时 |       峰值内存 |
-| -: | ----------: | -------: | ---------: |
-|  4 |      15,000 |   0.01 s |    5.07 MB |
-|  5 |     105,000 |   0.08 s |    7.25 MB |
-|  6 |   1,005,000 |   0.99 s |   22.72 MB |
-|  7 |  10,005,000 |  17.63 s |  292.93 MB |
-|  8 | 100,005,000 | 200.65 s | 2052.90 MB |
+| -: | ----------: | ------: | ---------: |
+|  4 |      15,000 |  0.02 s |    5.25 MB |
+|  5 |     105,000 |  0.06 s |    7.36 MB |
+|  6 |   1,005,000 |  0.48 s |   24.96 MB |
+|  7 |  10,005,000 |  5.89 s |  312.79 MB |
+|  8 | 100,005,000 | 62.99 s | 2404.18 MB |
 
 其中 `k=8`：
 
@@ -209,7 +212,7 @@ DIGITS = 756610557
 最大测试规模的峰值 RSS 为：
 
 ```text
-2052.90 MB
+2404.18 MB
 ```
 
 低于 3 GiB 的 Docker 内存限制，并在 600 s 时间限制内完成。
@@ -348,7 +351,7 @@ independent n! mod p
 
 同时，GMP 对 fingerprint 的交叉验证以及 Legendre 对末尾 0 的验证，又从另外两个角度提供了独立检查。
 
-因此，对于约 7.6 亿位的最终结果，可以通过**独立实现、数学恒等式、模运算和子模块测试的组合结果**建立对正确性的信心，而不是依赖人工逐位检查。
+因此，对于约 7.6 亿位的最终结果，可以通过**独立实现、数学恒等式和模运算验证的组合结果**建立对正确性的信心，而不是依赖人工逐位检查。
 
 ## 6. 遇到的问题与优化
 
@@ -361,6 +364,8 @@ OpenMP 并行并不意味着所有规模都能获得加速。
 因此代码中设置了 `OMP_PIVOT`，只在达到一定规模后启用 OpenMP，以降低小规模计算中的并行开销。
 
 ### 6.2 大整数内存占用
+
+> 这一点是在加入 PrimeSwing 之前遇到的，算是在尝试过程中试过的解决方案，在最终版本中已经不需要使用了。
 
 `k=8` 时最终结果约有 7.57 亿位，即使采用 `10^14` 压位，仍需要大量 limb 存储。
 
@@ -403,6 +408,14 @@ Peak RSS = 2052.90 MB
 
 在 3 GB 限制内完成计算。
 
+### 6.3 DIF 与 DIT
+
+由于在 $lim$ 较大时，蝴蝶变换会面临访问不连续、占用大数组等诸多不便，所以这里用 DIF 与 DIT 规避掉了蝴蝶变换，同时加快了运行效率。
+
+### PrimeSwing 与自乘
+
+从普通 Product Tree 改成 PrimeSwing 的一大优点便是可以用自乘代替部分乘法，这时只需要一次 NTT/DIF，能够做到显著优化。
+
 ## 7. 关于 AI 使用
 
 本项目使用 AI 主要作为辅助工具，而非直接生成整个算法实现。
@@ -412,6 +425,7 @@ Peak RSS = 2052.90 MB
 * `verify.sh`、`benchmark.sh`、Dockerfile、Makefile 等辅助工具
 * `speed.h` 中与性能测试相关的部分
 * `verify.cpp` 中与正确性测试相关的部分
+* Montgomery, PrimeSwing 等算法的辅助理解
 * README 的结构与措辞润色
 * 算法优化方向的讨论与参考
 * 部分代码 Debug
@@ -422,6 +436,7 @@ Peak RSS = 2052.90 MB
 * `bigint.h`
 * `common.h`
 * `mulmod.h`
+* `primeswing.h`
 * `solution.cpp`
 
 以及上述算法相关代码的主体设计与主要编写工作。

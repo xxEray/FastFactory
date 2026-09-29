@@ -7,9 +7,13 @@
 typedef unsigned long long ull;
 typedef unsigned __int128 u128;
 
+constexpr int MAX_BIT_FACTORY = 29;
+
 constexpr int LEAF_PIVOT = 32;
-constexpr int BF_PIVOT = 128;
+constexpr int FAC_BF_PIVOT = 16;
+constexpr int MUL_BF_PIVOT = 128;
 constexpr int OMP_PIVOT = 4096;
+// constexpr int SAVE_MEMORY = (1 << 27);
 constexpr int LOG2_OMP_PIVOT = 12;
 static_assert(1 << LOG2_OMP_PIVOT == OMP_PIVOT);
 
