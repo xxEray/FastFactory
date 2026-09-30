@@ -8,7 +8,8 @@ RUN apt-get update && \
         libgomp1 \
         time \
         coreutils \
-        procps && \
+        procps \
+        python3-minimal && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work

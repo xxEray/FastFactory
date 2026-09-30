@@ -46,3 +46,26 @@ for k in 4 5 6 7 8; do
 done
 
 echo "Wrote $OUT"
+
+find_python() {
+	for candidate in python3 python python.exe py; do
+		if command -v "$candidate" >/dev/null 2>&1 &&
+			"$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info[0] >= 3 else 1)' >/dev/null 2>&1; then
+			PYTHON="$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
+PYTHON=""
+if find_python; then
+	echo "Updating README.md from $OUT (using $PYTHON) ..."
+	if "$PYTHON" "$ROOT/update.py"; then
+		echo "README.md is up to date"
+	else
+		echo "warning: update.py failed; README.md was not updated" >&2
+	fi
+else
+	echo "warning: python 3 not found (tried python3/python/python.exe/py); skipping README.md update" >&2
+fi
