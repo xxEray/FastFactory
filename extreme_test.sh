@@ -35,7 +35,7 @@ run_in_env g++ src/solution.cpp -o solution -Ofast -fopenmp -march=native
 trap 'rm -f "$TMP_OUT" "$TMP_TIME"' EXIT
 
 echo "Running n=$n ..."
-run_in_env bash -c "/usr/bin/time -f 'Time: %es\nMemory: %M' ./solution $n > $TMP_OUT 2> $TMP_TIME"
+run_in_env bash -c "/usr/bin/time -f 'Time: %es\nMemory: %M' ./solution $n > .extreme_test.stdout 2> .extreme_test.time"
 {
 	printf 'n=%s\n' "$n"
 	cat "$TMP_OUT"
