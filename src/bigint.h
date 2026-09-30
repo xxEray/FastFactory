@@ -119,6 +119,7 @@ template<> struct Mod<1> {
 	static inline ull *itw(int c) { return itw1[c]; }
 	static inline ull *twim(int c) { return twim1[c]; }
 	static inline ull *itwim(int c) { return itwim1[c]; }
+	static inline ull invlim(int w) { return invlim1[w]; }
 	static inline ull invlimf(int w) { return invlim1f[w]; }
 };
 template<> struct Mod<2> {
@@ -134,6 +135,7 @@ template<> struct Mod<2> {
 	static inline ull *itw(int c) { return itw2[c]; }
 	static inline ull *twim(int c) { return twim2[c]; }
 	static inline ull *itwim(int c) { return itwim2[c]; }
+	static inline ull invlim(int w) { return invlim2[w]; }
 	static inline ull invlimf(int w) { return invlim2f[w]; }
 };
 using M1 = Mod<1>;
@@ -334,7 +336,7 @@ void dit_ser(std::vector<ull> &vec, int lim, int width) {
 	int cmax = (width & 1) ? width - 1 : width;
 	for(int cn = 2; cn <= cmax; cn += 2) dit4_ser<M>(vec, lim, cn);
 	if(width & 1) dit2_ser<M>(vec, lim, width);
-	ull inv = M::invlimf(width);
+	ull inv = M::invlim(width); // plain domain: mulmod(x, invlim) = x/2^width
 	for(int i = 0; i < lim; i++) M::mulmod(vec[i], inv);
 }
 // The *_stages drivers below contain `#pragma omp for` worksharing loops and
@@ -352,7 +354,7 @@ void dit_stages(std::vector<ull> &vec, int lim, int width) {
 	int cmax = (width & 1) ? width - 1 : width;
 	for(int cn = 2; cn <= cmax; cn += 2) dit4_omp<M>(vec, lim, cn);
 	if(width & 1) dit2_omp<M>(vec, lim, width);
-	ull inv = M::invlimf(width);
+	ull inv = M::invlim(width); // plain domain: mulmod(x, invlim) = x/2^width
 	#pragma omp for
 	for(int i = 0; i < lim; i++) M::mulmod(vec[i], inv);
 }
@@ -514,8 +516,8 @@ static inline void dit_stages_multi(BufRef *buf, int n, int lim, int width) {
 	for(int i = 0; i < lim; i++)
 		for(int a = 0; a < n; a++) {
 			std::vector<ull> &vec = *buf[a].v;
-			if(buf[a].m2) M2::mulmod(vec[i], M2::invlimf(width));
-			else M1::mulmod(vec[i], M1::invlimf(width));
+			if(buf[a].m2) M2::mulmod(vec[i], M2::invlim(width));
+			else M1::mulmod(vec[i], M1::invlim(width));
 		}
 }
 
@@ -556,15 +558,17 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			// pipelines -- and the two arrays of each -- are merged into shared
 			// worksharing loops so that the narrow early-DIF / late-DIT stages
 			// keep all threads busy.
+			//
+			// Values stay in plain (non-Montgomery) form throughout: mulmod of
+			// a plain value by a Montgomery-form twiddle yields W*x, i.e. the
+			// Montgomery factors cancel.  The conversion of the second operand
+			// is folded into the pointwise loop and the de-Montgomery into the
+			// DIT scaling, which removes the separate to_mont pass over the
+			// four input arrays.
 			BufRef dbuf[4] = {{&v3, false}, {&v4, false}, {&v1, true}, {&v2, true}};
 			BufRef ditbuf[2] = {{&v3, false}, {&v1, true}};
 			#pragma omp parallel
 			{
-				#pragma omp for
-				for(int i = 0; i < lim; i++) {
-					to_mont1(v3[i]), to_mont1(v4[i]);
-					to_mont2(v1[i]), to_mont2(v2[i]);
-				}
 #ifdef SPEED
 				#pragma omp master
 				{ SPEED_MARK(to_mont); }
@@ -576,8 +580,8 @@ void mul_eq(BigInt &x, BigInt &&y) {
 #endif
 				#pragma omp for
 				for(int i = 0; i < lim; i++) {
-					mulmod1(v3[i], v4[i]);
-					mulmod2(v1[i], v2[i]);
+					ull a = v4[i]; to_mont1(a); mulmod1(v3[i], a);
+					ull b = v2[i]; to_mont2(b); mulmod2(v1[i], b);
 				}
 #ifdef SPEED
 				#pragma omp master
@@ -591,7 +595,6 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			}
 		} else {
 			SPEED_TICK(a0);
-			for(int i = 0; i < lim; i++) to_mont1(v3[i]), to_mont1(v4[i]);
 			SPEED_TICK(a1);
 			SPEED_ADD(to_mont, a0, a1);
 			dif_ser<M1>(v3, lim, width);
@@ -599,7 +602,7 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			SPEED_TICK(a2);
 			SPEED_ADD(dif, a1, a2);
 			SPEED_TICK(a3);
-			for(int i = 0; i < lim; i++) mulmod1(v3[i], v4[i]);
+			for(int i = 0; i < lim; i++) { ull a = v4[i]; to_mont1(a); mulmod1(v3[i], a); }
 			SPEED_TICK(a4);
 			SPEED_ADD(pointwise, a3, a4);
 			SPEED_TICK(a5);
@@ -608,7 +611,6 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			SPEED_ADD(dit, a5, a6);
 
 			SPEED_TICK(b0);
-			for(int i = 0; i < lim; i++) to_mont2(v1[i]), to_mont2(v2[i]);
 			SPEED_TICK(b1);
 			SPEED_ADD(to_mont, b0, b1);
 			dif_ser<M2>(v1, lim, width);
@@ -616,7 +618,7 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			SPEED_TICK(b2);
 			SPEED_ADD(dif, b1, b2);
 			SPEED_TICK(b3);
-			for(int i = 0; i < lim; i++) mulmod2(v1[i], v2[i]);
+			for(int i = 0; i < lim; i++) { ull b = v2[i]; to_mont2(b); mulmod2(v1[i], b); }
 			SPEED_TICK(b4);
 			SPEED_ADD(pointwise, b3, b4);
 			SPEED_TICK(b5);
@@ -678,11 +680,6 @@ void mul_self_eq(BigInt &x) {
 			BufRef dbuf[2] = {{&v1, false}, {&v2, true}};
 			#pragma omp parallel
 			{
-				#pragma omp for
-				for(int i = 0; i < lim; i++) {
-					to_mont1(v1[i]);
-					to_mont2(v2[i]);
-				}
 #ifdef SPEED
 				#pragma omp master
 				{ SPEED_MARK(to_mont); }
@@ -692,10 +689,12 @@ void mul_self_eq(BigInt &x) {
 				#pragma omp master
 				{ SPEED_MARK(dif); }
 #endif
+				// Plain-domain pointwise square: one Montgomery copy supplies
+				// the R factor that mulmod consumes.
 				#pragma omp for
 				for(int i = 0; i < lim; i++) {
-					mulmod1(v1[i], v1[i]);
-					mulmod2(v2[i], v2[i]);
+					ull a = v1[i]; to_mont1(a); mulmod1(v1[i], a);
+					ull b = v2[i]; to_mont2(b); mulmod2(v2[i], b);
 				}
 #ifdef SPEED
 				#pragma omp master
@@ -709,14 +708,13 @@ void mul_self_eq(BigInt &x) {
 			}
 		} else {
 			SPEED_TICK(a0);
-			for(int i = 0; i < lim; i++) to_mont1(v1[i]);
 			SPEED_TICK(a1);
 			SPEED_ADD(to_mont, a0, a1);
 			dif_ser<M1>(v1, lim, width);
 			SPEED_TICK(a2);
 			SPEED_ADD(dif, a1, a2);
 			SPEED_TICK(a3);
-			for(int i = 0; i < lim; i++) mulmod1(v1[i], v1[i]);
+			for(int i = 0; i < lim; i++) { ull a = v1[i]; to_mont1(a); mulmod1(v1[i], a); }
 			SPEED_TICK(a4);
 			SPEED_ADD(pointwise, a3, a4);
 			SPEED_TICK(a5);
@@ -725,14 +723,13 @@ void mul_self_eq(BigInt &x) {
 			SPEED_ADD(dit, a5, a6);
 
 			SPEED_TICK(b0);
-			for(int i = 0; i < lim; i++) to_mont2(v2[i]);
 			SPEED_TICK(b1);
 			SPEED_ADD(to_mont, b0, b1);
 			dif_ser<M2>(v2, lim, width);
 			SPEED_TICK(b2);
 			SPEED_ADD(dif, b1, b2);
 			SPEED_TICK(b3);
-			for(int i = 0; i < lim; i++) mulmod2(v2[i], v2[i]);
+			for(int i = 0; i < lim; i++) { ull b = v2[i]; to_mont2(b); mulmod2(v2[i], b); }
 			SPEED_TICK(b4);
 			SPEED_ADD(pointwise, b3, b4);
 			SPEED_TICK(b5);
