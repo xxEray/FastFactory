@@ -1,4 +1,5 @@
 #include <string>
+#include <cstdint>
 #include <omp.h>
 #include "bigint.h"
 #include "primeswing.h"
@@ -32,9 +33,32 @@ int main(int argc, char *argv[]) {
 	for(ull x = w[j]; x % 10 == 0; x /= 10) low_zeros++;
 	zeros += low_zeros;
 
+	// Digit sum: a 10000-entry lookup table turns each 14-digit limb into
+	// three 4-digit chunks plus one 2-digit remainder; each chunk boundary is
+	// a constant division (compiled to multiply-shift), so a limb costs ~3
+	// mul-shifts + 4 lookups instead of 14 digit divisions.  Parallel over
+	// limbs.
+	static uint8_t dsum4[10000];
+	static bool dsum_ready = false;
+	if(!dsum_ready) {
+		for(int i = 0; i < 10000; i++) {
+			int s = 0, t = i;
+			while(t) s += t % 10, t /= 10;
+			dsum4[i] = (uint8_t)s;
+		}
+		dsum_ready = true;
+	}
 	long long digitsum = 0;
-	for(ull x : w)
-		while(x) digitsum += x % 10, x /= 10;
+	const int wsz = (int)w.size();
+	#pragma omp parallel for reduction(+:digitsum) schedule(static)
+	for(int i = 0; i < wsz; i++) {
+		ull x = w[i];
+		long long s = dsum4[x % 10000]; x /= 10000;
+		s += dsum4[x % 10000]; x /= 10000;
+		s += dsum4[x % 10000]; x /= 10000;
+		s += dsum4[x % 100];
+		digitsum += s;
+	}
 
 	std::string head;
 	for(int i = (int)w.size() - 1; i >= 0 && head.size() < 50; i--)

@@ -9,14 +9,29 @@
 #include "common.h"
 #include "bigint.h"
 
-bool *isprm;
+// Odd-only bit-packed sieve.  Bit (p >> 1) stores the primality of the odd
+// number p; 2 is handled specially.  Memory drops from n bytes (~100 MB at
+// n = 1e8) to n/16 bytes (~6 MB), which keeps the working set cache-friendly
+// and leaves headroom under the 3 GB limit.
+std::vector<ull> prm_bits;
+
+static inline bool isprm(int p) {
+	if(p < 2) return false;
+	if(p == 2) return true;
+	if(!(p & 1)) return false;
+	return (prm_bits[p >> 7] >> ((p >> 1) & 63)) & 1;
+}
+
 void sieve(int n) {
 	SPEED_TICK(s0);
-	isprm = new bool[n + 5];
-	std::fill(isprm, isprm + n + 5, true);
-	isprm[0] = isprm[1] = false;
-	for(int i = 2; i <= n; i++) if(isprm[i] && static_cast<ull>(i) * i <= n)
-		for(int j = i * i; j <= n; j += i) isprm[j] = false;
+	const size_t half = (size_t)n >> 1; // highest index = n >> 1
+	prm_bits.assign(half / 64 + 2, ~0ULL);
+	prm_bits[0] &= ~1ULL; // 1 is not prime
+	for(int q = 3; (ull)q * q <= (ull)n; q += 2) {
+		if(!isprm(q)) continue;
+		for(size_t j = ((size_t)q * q) >> 1; j <= half; j += q)
+			prm_bits[j >> 6] &= ~(1ULL << (j & 63));
+	}
 	SPEED_TICK(s1);
 	SPEED_ADD_TOTAL(sieve, s0, s1);
 }
@@ -54,7 +69,7 @@ BigInt product_tree(const std::vector<unsigned> &vec, int l, int r) {
 	}
 	int nblk = (n + LEAF_PIVOT - 1) / LEAF_PIVOT;
 	std::vector<BigInt> cur(nblk);
-	#pragma omp parallel for schedule(static)
+	#pragma omp parallel for schedule(dynamic)
 	for(int b = 0; b < nblk; b++) {
 		int lo = l + b * LEAF_PIVOT;
 		int hi = std::min(r, lo + LEAF_PIVOT - 1);
@@ -66,7 +81,7 @@ BigInt product_tree(const std::vector<unsigned> &vec, int l, int r) {
 		int m = (int)cur.size(), nxt = (m + 1) / 2;
 		std::vector<BigInt> nxtv(nxt);
 		if(nxt >= TREE_PAR_MIN) {
-			#pragma omp parallel for schedule(static)
+			#pragma omp parallel for schedule(dynamic)
 			for(int i = 0; i < nxt; i++) {
 				if(2 * i + 1 < m) {
 					BigInt t = std::move(cur[2 * i]);
@@ -95,7 +110,7 @@ BigInt swing(int n) {
 	while(static_cast<ull>(sqn + 1) * (sqn + 1) <= n) sqn++;
 	while(static_cast<ull>(sqn) * sqn > n) sqn--;
 	assert(n >= 4);
-	for(int p = 3; p <= sqn; p++) if(isprm[p]) {
+	for(int p = 3; p <= sqn; p++) if(isprm(p)) {
 		int t = n;
 		unsigned val = 1;
 		while(t) {
@@ -104,9 +119,9 @@ BigInt swing(int n) {
 		}
 		if(val > 1) vec.emplace_back(val);
 	}
-	for(int p = sqn + 1; p <= n / 3; p++) if(isprm[p])
+	for(int p = sqn + 1; p <= n / 3; p++) if(isprm(p))
 		if(n / p & 1) vec.emplace_back(p);
-	for(int p = n / 2 + 1; p <= n; p++) if(isprm[p]) vec.emplace_back(p);
+	for(int p = n / 2 + 1; p <= n; p++) if(isprm(p)) vec.emplace_back(p);
 	SPEED_TICK(w1);
 	SPEED_ADD_TOTAL(swing, w0, w1);
 	BigInt ret = product_tree(vec, 0, (int)vec.size() - 1);
