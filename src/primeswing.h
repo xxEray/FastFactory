@@ -3,6 +3,8 @@
 
 #include <cmath>
 #include <vector>
+#include <utility>
+#include <algorithm>
 #include <functional>
 #include "common.h"
 #include "bigint.h"
@@ -19,17 +21,71 @@ void sieve(int n) {
 	SPEED_ADD_TOTAL(sieve, s0, s1);
 }
 
+// Levelized product tree.
+//
+// The original implementation was a plain recursion:
+//
+//     val = product_tree(l, mid); mul_eq(val, product_tree(mid + 1, r));
+//
+// i.e. the two child products were built strictly one after the other, so the
+// whole lower part of the tree ran single-threaded (lim < OMP_PIVOT => the NTT
+// runs serially).
+//
+// Here we build LEAF_PIVOT-sized leaf products in parallel, then reduce them
+// pairwise.  A round is parallelized across pairs while it still has at least
+// TREE_PAR_MIN pairs: each pair then runs its NTT serially (no nested region),
+// which keeps all threads busy even though a single transform only scales
+// ~1.7x internally.  Once the pair count drops below TREE_PAR_MIN the round is
+// run serially so the last few big multiplications can use the whole team.
+//
+// Memory: at a level with `nxt` pairs the operands total ~|result| limbs, so
+// the concurrent scratch is <= 32 * |result| bytes -- i.e. no more than what a
+// single top-level multiplication already needs.  The product itself is
+// unchanged.
+constexpr int TREE_PAR_MIN = 2;
+
 BigInt product_tree(const std::vector<unsigned> &vec, int l, int r) {
 	if(l > r) return 1u;
-	if(r - l + 1 <= LEAF_PIVOT) {
+	int n = r - l + 1;
+	if(n <= LEAF_PIVOT) {
 		BigInt ret(vec[l]);
 		for(int i = l + 1; i <= r; i++) ret *= vec[i];
 		return ret;
 	}
-	int mid = (l + r) / 2;
-	BigInt val = product_tree(vec, l, mid);
-	mul_eq(val, product_tree(vec, mid + 1, r));
-	return val;
+	int nblk = (n + LEAF_PIVOT - 1) / LEAF_PIVOT;
+	std::vector<BigInt> cur(nblk);
+	#pragma omp parallel for schedule(static)
+	for(int b = 0; b < nblk; b++) {
+		int lo = l + b * LEAF_PIVOT;
+		int hi = std::min(r, lo + LEAF_PIVOT - 1);
+		BigInt t(vec[lo]);
+		for(int i = lo + 1; i <= hi; i++) t *= vec[i];
+		cur[b] = std::move(t);
+	}
+	while(cur.size() > 1) {
+		int m = (int)cur.size(), nxt = (m + 1) / 2;
+		std::vector<BigInt> nxtv(nxt);
+		if(nxt >= TREE_PAR_MIN) {
+			#pragma omp parallel for schedule(static)
+			for(int i = 0; i < nxt; i++) {
+				if(2 * i + 1 < m) {
+					BigInt t = std::move(cur[2 * i]);
+					mul_eq(t, std::move(cur[2 * i + 1]));
+					nxtv[i] = std::move(t);
+				} else nxtv[i] = std::move(cur[2 * i]);
+			}
+		} else {
+			for(int i = 0; i < nxt; i++) {
+				if(2 * i + 1 < m) {
+					BigInt t = std::move(cur[2 * i]);
+					mul_eq(t, std::move(cur[2 * i + 1]));
+					nxtv[i] = std::move(t);
+				} else nxtv[i] = std::move(cur[2 * i]);
+			}
+		}
+		cur.swap(nxtv);
+	}
+	return std::move(cur[0]);
 }
 
 BigInt swing(int n) {
