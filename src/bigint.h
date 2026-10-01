@@ -60,11 +60,18 @@ ull invlim1f[MAX_BIT_FACTORY], invlim2f[MAX_BIT_FACTORY]; // invlim with the Mon
 ull wn1[MAX_BIT_FACTORY], iwn1[MAX_BIT_FACTORY], wn2[MAX_BIT_FACTORY], iwn2[MAX_BIT_FACTORY];
 ull im1, im2;        // sqrt(-1) in Montgomery form
 ull im1inv, im2inv;  // -sqrt(-1) in Montgomery form
-// Pow tables (radix-2 / radix-4 twiddles) for short stage twiddle sequences.
-ull tw1[LOG2_OMP_PIVOT][OMP_PIVOT], tw2[LOG2_OMP_PIVOT][OMP_PIVOT];
-ull itw1[LOG2_OMP_PIVOT][OMP_PIVOT], itw2[LOG2_OMP_PIVOT][OMP_PIVOT];
-ull twim1[LOG2_OMP_PIVOT][OMP_PIVOT], twim2[LOG2_OMP_PIVOT][OMP_PIVOT];
-ull itwim1[LOG2_OMP_PIVOT][OMP_PIVOT], itwim2[LOG2_OMP_PIVOT][OMP_PIVOT];
+// Twiddle rows for radix-2/radix-4 butterflies.  Row w holds W_w^k for
+// k < 2^(w-1), plus its inverse and im-scaled variants.  Stages with
+// cn < TW_MAX use these tables; the handful of larger stages (only the top
+// few of a big transform) still advance their twiddles by multiplication.
+// Table lookups replace 3 mulmods per butterfly with 3 loads, which matters
+// because that advance is 75% of the butterfly's mulmod count.
+// Total: 8 tables x 2^20 entries x 8 B = 64 MB.
+constexpr int TW_MAX = 21;
+std::vector<ull> tw1[TW_MAX], tw2[TW_MAX];
+std::vector<ull> itw1[TW_MAX], itw2[TW_MAX];
+std::vector<ull> twim1[TW_MAX], twim2[TW_MAX];
+std::vector<ull> itwim1[TW_MAX], itwim2[TW_MAX];
 // Scratch buffers. thread_local so that several independent multiplications
 // may run concurrently (e.g. independent product-tree nodes on different
 // threads) without clobbering each other.
@@ -85,16 +92,21 @@ void get_wn() {
 	// sqrt(-1) = g^((p-1)/4); both moduli are 1 (mod 4).
 	im1 = qpow1(G1_R, (MOD1 - 1) / 4), im1inv = MOD1 - im1;
 	im2 = qpow2(G2_R, (MOD2 - 1) / 4), im2inv = MOD2 - im2;
-	for(int w = 0; w < LOG2_OMP_PIVOT; w++) {
+	for(int w = 0; w < TW_MAX; w++) {
+		int cnt = w == 0 ? 1 : (1 << (w - 1)); // rows cover k < 2^(w-1)
+		tw1[w].assign(cnt, 0), itw1[w].assign(cnt, 0);
+		tw2[w].assign(cnt, 0), itw2[w].assign(cnt, 0);
+		twim1[w].assign(cnt, 0), itwim1[w].assign(cnt, 0);
+		twim2[w].assign(cnt, 0), itwim2[w].assign(cnt, 0);
 		tw1[w][0] = R_MOD1, itw1[w][0] = R_MOD1;
 		tw2[w][0] = R_MOD2, itw2[w][0] = R_MOD2;
-		for(int i = 1; i < OMP_PIVOT; i++) {
+		for(int i = 1; i < cnt; i++) {
 			tw1[w][i] = tw1[w][i - 1], mulmod1(tw1[w][i], wn1[w]);
 			itw1[w][i] = itw1[w][i - 1], mulmod1(itw1[w][i], iwn1[w]);
 			tw2[w][i] = tw2[w][i - 1], mulmod2(tw2[w][i], wn2[w]);
 			itw2[w][i] = itw2[w][i - 1], mulmod2(itw2[w][i], iwn2[w]);
 		}
-		for(int i = 0; i < OMP_PIVOT; i++) {
+		for(int i = 0; i < cnt; i++) {
 			twim1[w][i] = tw1[w][i], mulmod1(twim1[w][i], im1);
 			itwim1[w][i] = itw1[w][i], mulmod1(itwim1[w][i], im1inv);
 			twim2[w][i] = tw2[w][i], mulmod2(twim2[w][i], im2);
@@ -115,10 +127,10 @@ template<> struct Mod<1> {
 	static inline ull iwn(int c) { return iwn1[c]; }
 	static inline ull im() { return im1; }
 	static inline ull iminv() { return im1inv; }
-	static inline ull *tw(int c) { return tw1[c]; }
-	static inline ull *itw(int c) { return itw1[c]; }
-	static inline ull *twim(int c) { return twim1[c]; }
-	static inline ull *itwim(int c) { return itwim1[c]; }
+	static inline ull *tw(int c) { return tw1[c].data(); }
+	static inline ull *itw(int c) { return itw1[c].data(); }
+	static inline ull *twim(int c) { return twim1[c].data(); }
+	static inline ull *itwim(int c) { return itwim1[c].data(); }
 	static inline ull invlim(int w) { return invlim1[w]; }
 	static inline ull invlimf(int w) { return invlim1f[w]; }
 };
@@ -131,10 +143,10 @@ template<> struct Mod<2> {
 	static inline ull iwn(int c) { return iwn2[c]; }
 	static inline ull im() { return im2; }
 	static inline ull iminv() { return im2inv; }
-	static inline ull *tw(int c) { return tw2[c]; }
-	static inline ull *itw(int c) { return itw2[c]; }
-	static inline ull *twim(int c) { return twim2[c]; }
-	static inline ull *itwim(int c) { return itwim2[c]; }
+	static inline ull *tw(int c) { return tw2[c].data(); }
+	static inline ull *itw(int c) { return itw2[c].data(); }
+	static inline ull *twim(int c) { return twim2[c].data(); }
+	static inline ull *itwim(int c) { return itwim2[c].data(); }
 	static inline ull invlim(int w) { return invlim2[w]; }
 	static inline ull invlimf(int w) { return invlim2f[w]; }
 };
@@ -227,7 +239,7 @@ void dit4_ser(std::vector<ull> &vec, int lim, int cn) {
 template<class M>
 void dif2_omp(std::vector<ull> &vec, int lim, int cn) {
 	int i = 1 << (cn - 1), step = i << 1;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		const ull *twc = M::tw(cn);
 		#pragma omp for
 		for(int j = 0; j < lim; j += step)
@@ -255,7 +267,7 @@ void dif2_omp(std::vector<ull> &vec, int lim, int cn) {
 template<class M>
 void dif4_omp(std::vector<ull> &vec, int lim, int cn) {
 	int m = 1 << (cn - 2), step = m << 2;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		const ull *twc = M::tw(cn), *twp = M::tw(cn - 1), *twic = M::twim(cn);
 		#pragma omp for
 		for(int j = 0; j < lim; j += step)
@@ -277,7 +289,7 @@ void dif4_omp(std::vector<ull> &vec, int lim, int cn) {
 template<class M>
 void dit2_omp(std::vector<ull> &vec, int lim, int cn) {
 	int i = 1 << (cn - 1), step = i << 1;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		const ull *itwc = M::itw(cn);
 		#pragma omp for
 		for(int j = 0; j < lim; j += step)
@@ -305,7 +317,7 @@ void dit2_omp(std::vector<ull> &vec, int lim, int cn) {
 template<class M>
 void dit4_omp(std::vector<ull> &vec, int lim, int cn) {
 	int m = 1 << (cn - 2), step = m << 2;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		const ull *itwc = M::itw(cn), *itwp = M::itw(cn - 1), *itwic = M::itwim(cn);
 		#pragma omp for
 		for(int j = 0; j < lim; j += step)
@@ -336,8 +348,6 @@ void dit_ser(std::vector<ull> &vec, int lim, int width) {
 	int cmax = (width & 1) ? width - 1 : width;
 	for(int cn = 2; cn <= cmax; cn += 2) dit4_ser<M>(vec, lim, cn);
 	if(width & 1) dit2_ser<M>(vec, lim, width);
-	ull inv = M::invlim(width); // plain domain: mulmod(x, invlim) = x/2^width
-	for(int i = 0; i < lim; i++) M::mulmod(vec[i], inv);
 }
 // The *_stages drivers below contain `#pragma omp for` worksharing loops and
 // MUST be called from inside an already-active `#pragma omp parallel` region
@@ -433,7 +443,7 @@ static inline void dit4_block_run(std::vector<ull> &vec, int j, int m, ull iW, u
 
 static inline void dif2_multi(BufRef *buf, int n, int lim, int cn) {
 	int i = 1 << (cn - 1), step = i << 1;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
@@ -451,7 +461,7 @@ static inline void dif2_multi(BufRef *buf, int n, int lim, int cn) {
 }
 static inline void dif4_multi(BufRef *buf, int n, int lim, int cn) {
 	int m = 1 << (cn - 2), step = m << 2;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
@@ -469,7 +479,7 @@ static inline void dif4_multi(BufRef *buf, int n, int lim, int cn) {
 }
 static inline void dit2_multi(BufRef *buf, int n, int lim, int cn) {
 	int i = 1 << (cn - 1), step = i << 1;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
@@ -487,7 +497,7 @@ static inline void dit2_multi(BufRef *buf, int n, int lim, int cn) {
 }
 static inline void dit4_multi(BufRef *buf, int n, int lim, int cn) {
 	int m = 1 << (cn - 2), step = m << 2;
-	if(cn < LOG2_OMP_PIVOT) {
+	if(cn < TW_MAX) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
@@ -503,25 +513,94 @@ static inline void dit4_multi(BufRef *buf, int n, int lim, int cn) {
 			}
 	}
 }
+// ---- cache-tiled small stages --------------------------------------------
+// Stages cn <= TILE_CN only touch indices inside each 2^cn block, and blocks
+// of that size nest inside a TILE-sized chunk.  Running all of those stages
+// per chunk (in their usual relative order) means the chunk is fetched from
+// memory once instead of once per stage: for a 2^26 transform this turns 13
+// full-array passes into 6 (5 big-stride stages + 1 tiled pass).
+constexpr int TILE_CN = 14;
+constexpr int TILE = 1 << TILE_CN;
+
+static inline void dif4_tiled_multi(BufRef *buf, int n, int lim, int cn) {
+	#pragma omp for collapse(2)
+	for(int a = 0; a < n; a++)
+		for(int t = 0; t < lim; t += TILE) {
+			std::vector<ull> &vec = *buf[a].v;
+			int tend = t + TILE > lim ? lim : t + TILE;
+			for(int c = cn; c >= 2; c -= 2) {
+				int m = 1 << (c - 2), step = m << 2;
+				for(int j = t; j < tend; j += step) {
+					if(buf[a].m2) dif4_block<M2>(vec, j, m, M2::tw(c), M2::tw(c - 1), M2::twim(c));
+					else dif4_block<M1>(vec, j, m, M1::tw(c), M1::tw(c - 1), M1::twim(c));
+				}
+			}
+		}
+}
+static inline void dit4_tiled_multi(BufRef *buf, int n, int lim, int cmax) {
+	#pragma omp for collapse(2)
+	for(int a = 0; a < n; a++)
+		for(int t = 0; t < lim; t += TILE) {
+			std::vector<ull> &vec = *buf[a].v;
+			int tend = t + TILE > lim ? lim : t + TILE;
+			for(int c = 2; c <= cmax; c += 2) {
+				int m = 1 << (c - 2), step = m << 2;
+				for(int j = t; j < tend; j += step) {
+					if(buf[a].m2) dit4_block<M2>(vec, j, m, M2::itw(c - 1), M2::itw(c), M2::itwim(c));
+					else dit4_block<M1>(vec, j, m, M1::itw(c - 1), M1::itw(c), M1::itwim(c));
+				}
+			}
+		}
+}
 static inline void dif_stages_multi(BufRef *buf, int n, int lim, int width) {
 	int cn = width;
 	if(width & 1) { dif2_multi(buf, n, lim, cn); cn--; }
-	for(; cn >= 2; cn -= 2) dif4_multi(buf, n, lim, cn);
+	for(; cn > TILE_CN; cn -= 2) dif4_multi(buf, n, lim, cn);
+	if(cn >= 2) dif4_tiled_multi(buf, n, lim, cn);
 }
 static inline void dit_stages_multi(BufRef *buf, int n, int lim, int width) {
 	int cmax = (width & 1) ? width - 1 : width;
-	for(int cn = 2; cn <= cmax; cn += 2) dit4_multi(buf, n, lim, cn);
+	if(cmax >= 2) {
+		int tmax = cmax < TILE_CN ? cmax : TILE_CN;
+		if(tmax >= 2) dit4_tiled_multi(buf, n, lim, tmax);
+		for(int cn = tmax + 2; cn <= cmax; cn += 2) dit4_multi(buf, n, lim, cn);
+	}
 	if(width & 1) dit2_multi(buf, n, lim, width);
-	#pragma omp for
-	for(int i = 0; i < lim; i++)
-		for(int a = 0; a < n; a++) {
-			std::vector<ull> &vec = *buf[a].v;
-			if(buf[a].m2) M2::mulmod(vec[i], M2::invlim(width));
-			else M1::mulmod(vec[i], M1::invlim(width));
-		}
 }
 
 // ---- multiplication -------------------------------------------------------
+// Reconstruct the base-B digits of an exact product from its residues modulo
+// MOD1 (r1) and MOD2 (r2), folding in the final division by 2^width.  The
+// exact convolution coefficient at position i is < B^(lim-i), so splitting it
+// as r + q1*B + q2*B^2 (q2 < 2^31) keeps the normalization carry <= 2: the
+// heavy u128 division work runs in parallel and the serial part is a cheap
+// add/compare chain.  `out` may alias r1 or r2; q1s/q2s may alias either
+// residue array (each element is read before it is overwritten).
+static void crt_finalize(ull *out, ull *r1, ull *r2, ull *q1s, ull *q2s,
+	int lim, ull inv1, ull inv2, bool par) {
+	#pragma omp parallel for schedule(static) if(par)
+	for(int i = 0; i < lim; i++) {
+		ull a = r1[i], b = r2[i];
+		mulmod1(a, inv1), mulmod2(b, inv2);
+		ull t = (b >= a ? b - a : b + MOD2 - a);
+		mulmod2(t, INV_MOD1_MOD2_R);
+		u128 val = static_cast<u128>(a) + static_cast<u128>(MOD1) * t;
+		u128 q = val / B;
+		q1s[i] = static_cast<ull>(q % B);
+		q2s[i] = static_cast<ull>(q / B);
+		out[i] = static_cast<ull>(val - q * B);
+	}
+	ull carry = 0, q1m = 0, q2m1 = 0, q2m2 = 0;
+	for(int i = 0; i < lim; i++) {
+		ull s = out[i] + q1m + q2m2 + carry;
+		carry = 0;
+		if(s >= B) { s -= B, carry = 1; }
+		if(s >= B) { s -= B, carry = 2; }
+		out[i] = s;
+		q2m2 = q2m1, q2m1 = q2s[i], q1m = q1s[i];
+	}
+}
+
 void mul_eq(BigInt &x, BigInt &&y) {
 	int len = x.w.size() + y.w.size();
 	if(len <= MUL_BF_PIVOT) {
@@ -629,17 +708,13 @@ void mul_eq(BigInt &x, BigInt &&y) {
 
 		SPEED_TICK(t8);
 		// CRT: reconstruct c in [0, MOD1*MOD2) from c mod MOD1 and c mod MOD2.
-		// x = r1 + MOD1 * (((r2-r1) * inv(MOD1) mod MOD2)).
-		// (the de-Montgomery conversion is already folded into the DIT scaling)
-		u128 last = 0;
-		for(int i = 0; i < lim; i++) {
-			ull t = (v1[i] >= v3[i] ? v1[i] - v3[i] : v1[i] + MOD2 - v3[i]);
-			mulmod2(t, INV_MOD1_MOD2_R);
-			u128 val = static_cast<u128>(v3[i]) + static_cast<u128>(MOD1) * t;
-			val += last;
-			last = val / B;
-			v1[i] = static_cast<ull>(val % B);
-		}
+		// x = r1 + MOD1 * (((r2-r1) * inv(MOD1) mod MOD2)).  The u128 work runs
+		// in parallel and the normalization carries are bounded by 2, so the
+		// serial part is a cheap add/compare chain.  v2/v4 are dead after the
+		// pointwise pass and carry the digit streams; the final division by
+		// 2^width (formerly a separate pass after DIT) is folded in here.
+		crt_finalize(v1.data(), v3.data(), v1.data(), v2.data(), v4.data(),
+			lim, M1::invlim(width), M2::invlim(width), omp);
 		SPEED_TICK(t9);
 		SPEED_ADD(crt, t8, t9);
 		x.pop_zero();
@@ -741,16 +816,11 @@ void mul_self_eq(BigInt &x) {
 		SPEED_TICK(t8);
 		// CRT: reconstruct c in [0, MOD1*MOD2) from c mod MOD1 and c mod MOD2.
 		// x = r1 + MOD1 * (((r2-r1) * inv(MOD1) mod MOD2)).
-		// (the de-Montgomery conversion is already folded into the DIT scaling)
-		u128 last = 0;
-		for(int i = 0; i < lim; i++) {
-			ull t = (v2[i] >= v1[i] ? v2[i] - v1[i] : v2[i] + MOD2 - v1[i]);
-			mulmod2(t, INV_MOD1_MOD2_R);
-			u128 val = static_cast<u128>(v1[i]) + static_cast<u128>(MOD1) * t;
-			val += last;
-			last = val / B;
-			v1[i] = static_cast<ull>(val % B);
-		}
+		// v2 is consumed here and carries the q1 digit stream; tmp2 (unused by
+		// this routine until now) carries q2.
+		tmp2.resize(lim);
+		crt_finalize(v1.data(), v1.data(), v2.data(), v2.data(), tmp2.data(),
+			lim, M1::invlim(width), M2::invlim(width), omp);
 		SPEED_TICK(t9);
 		SPEED_ADD(crt, t8, t9);
 		x.pop_zero();

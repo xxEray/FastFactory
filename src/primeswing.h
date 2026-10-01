@@ -135,9 +135,15 @@ BigInt factorial(int n) {
 		for(int i = 2; i <= n; i++) val *= static_cast<unsigned>(i);
 		return val;
 	}
+	// n! = f(n/2)^2 * swing(n) = f(n/2) * (f(n/2) * swing(n)).  Folding the
+	// swing into one factor first keeps that product short (|f|+|swing| instead
+	// of 2|f|), so the first multiplication transforms at half the length; the
+	// second then replaces the squaring.  In transform work this is
+	// 6*N/2*log(N/2) + 6*N*log(N) instead of 4*N*log(N) + 6*N*log(N).
 	BigInt val = factorial(n / 2);
-	mul_self_eq(val);
-	mul_eq(val, swing(n));
+	BigInt t = val;
+	mul_eq(t, swing(n));
+	mul_eq(val, std::move(t));
 	return val;
 }
 
