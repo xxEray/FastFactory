@@ -60,18 +60,18 @@ ull invlim1f[MAX_BIT_FACTORY], invlim2f[MAX_BIT_FACTORY]; // invlim with the Mon
 ull wn1[MAX_BIT_FACTORY], iwn1[MAX_BIT_FACTORY], wn2[MAX_BIT_FACTORY], iwn2[MAX_BIT_FACTORY];
 ull im1, im2;        // sqrt(-1) in Montgomery form
 ull im1inv, im2inv;  // -sqrt(-1) in Montgomery form
-// Twiddle rows for radix-2/radix-4 butterflies.  Row w holds W_w^k for
-// k < 2^(w-1), plus its inverse and im-scaled variants.  Stages with
-// cn < TW_MAX use these tables; the handful of larger stages (only the top
-// few of a big transform) still advance their twiddles by multiplication.
-// Table lookups replace 3 mulmods per butterfly with 3 loads, which matters
-// because that advance is 75% of the butterfly's mulmod count.
-// Total: 8 tables x 2^20 entries x 8 B = 64 MB.
-constexpr int TW_MAX = 21;
+// Twiddle rows: row w holds W_w^i for i < 2^(w-1).  Three quantities needed
+// by a radix-4 butterfly at stage cn all read this single row:
+//   p = W^k        = tw[k]
+//   q = W^{2k}     = tw[2k]           (W_{cn-1} = W_cn^2)
+//   r = IM·W^k     = tw[k + 2^(cn-2)] (IM = W^{2^(cn-2)})
+// so one row replaces the tw/twp/twim trio per stage and the butterflies
+// stream one table instead of three.  Stages cn < TW_MAX use these rows; the
+// handful of larger stages advance their twiddles by multiplication.
+// Total: 4 rows-sets x 2^21 entries x 8 B = 64 MB.
+constexpr int TW_MAX = 22;
 std::vector<ull> tw1[TW_MAX], tw2[TW_MAX];
 std::vector<ull> itw1[TW_MAX], itw2[TW_MAX];
-std::vector<ull> twim1[TW_MAX], twim2[TW_MAX];
-std::vector<ull> itwim1[TW_MAX], itwim2[TW_MAX];
 // Scratch buffers. thread_local so that several independent multiplications
 // may run concurrently (e.g. independent product-tree nodes on different
 // threads) without clobbering each other.
@@ -93,11 +93,9 @@ void get_wn() {
 	im1 = qpow1(G1_R, (MOD1 - 1) / 4), im1inv = MOD1 - im1;
 	im2 = qpow2(G2_R, (MOD2 - 1) / 4), im2inv = MOD2 - im2;
 	for(int w = 0; w < TW_MAX; w++) {
-		int cnt = w == 0 ? 1 : (1 << (w - 1)); // rows cover k < 2^(w-1)
+		int cnt = w == 0 ? 1 : (1 << (w - 1)); // rows cover i < 2^(w-1)
 		tw1[w].assign(cnt, 0), itw1[w].assign(cnt, 0);
 		tw2[w].assign(cnt, 0), itw2[w].assign(cnt, 0);
-		twim1[w].assign(cnt, 0), itwim1[w].assign(cnt, 0);
-		twim2[w].assign(cnt, 0), itwim2[w].assign(cnt, 0);
 		tw1[w][0] = R_MOD1, itw1[w][0] = R_MOD1;
 		tw2[w][0] = R_MOD2, itw2[w][0] = R_MOD2;
 		for(int i = 1; i < cnt; i++) {
@@ -105,12 +103,6 @@ void get_wn() {
 			itw1[w][i] = itw1[w][i - 1], mulmod1(itw1[w][i], iwn1[w]);
 			tw2[w][i] = tw2[w][i - 1], mulmod2(tw2[w][i], wn2[w]);
 			itw2[w][i] = itw2[w][i - 1], mulmod2(itw2[w][i], iwn2[w]);
-		}
-		for(int i = 0; i < cnt; i++) {
-			twim1[w][i] = tw1[w][i], mulmod1(twim1[w][i], im1);
-			itwim1[w][i] = itw1[w][i], mulmod1(itwim1[w][i], im1inv);
-			twim2[w][i] = tw2[w][i], mulmod2(twim2[w][i], im2);
-			itwim2[w][i] = itw2[w][i], mulmod2(itwim2[w][i], im2inv);
 		}
 	}
 }
@@ -129,8 +121,6 @@ template<> struct Mod<1> {
 	static inline ull iminv() { return im1inv; }
 	static inline ull *tw(int c) { return tw1[c].data(); }
 	static inline ull *itw(int c) { return itw1[c].data(); }
-	static inline ull *twim(int c) { return twim1[c].data(); }
-	static inline ull *itwim(int c) { return itwim1[c].data(); }
 	static inline ull invlim(int w) { return invlim1[w]; }
 	static inline ull invlimf(int w) { return invlim1f[w]; }
 };
@@ -145,8 +135,6 @@ template<> struct Mod<2> {
 	static inline ull iminv() { return im2inv; }
 	static inline ull *tw(int c) { return tw2[c].data(); }
 	static inline ull *itw(int c) { return itw2[c].data(); }
-	static inline ull *twim(int c) { return twim2[c].data(); }
-	static inline ull *itwim(int c) { return itwim2[c].data(); }
 	static inline ull invlim(int w) { return invlim2[w]; }
 	static inline ull invlimf(int w) { return invlim2f[w]; }
 };
@@ -162,7 +150,7 @@ using M2 = Mod<2>;
 //   DIF: p = W^k,     q = W^(2k),   r = W^k * IM
 //   DIT: p = W^(-2k), q = W^(-k),   r = W^(-k) * IM^(-1)
 template<class M>
-static inline void dif4_butterfly(std::vector<ull> &vec, int o, int m, ull p, ull q, ull r) {
+static inline void dif4_butterfly(ull * __restrict vec, int o, int m, ull p, ull q, ull r) {
 	ull a0 = vec[o], a1 = vec[o + m], a2 = vec[o + 2 * m], a3 = vec[o + 3 * m];
 	ull t0 = M::trim(a0 + a2), t1 = (a0 >= a2 ? a0 - a2 : a0 + M::MOD - a2);
 	ull t2 = M::trim(a1 + a3), t3 = (a1 >= a3 ? a1 - a3 : a1 + M::MOD - a3);
@@ -176,7 +164,7 @@ static inline void dif4_butterfly(std::vector<ull> &vec, int o, int m, ull p, ul
 	vec[o] = c0, vec[o + m] = c1, vec[o + 2 * m] = c2, vec[o + 3 * m] = c3;
 }
 template<class M>
-static inline void dit4_butterfly(std::vector<ull> &vec, int o, int m, ull p, ull q, ull r) {
+static inline void dit4_butterfly(ull * __restrict vec, int o, int m, ull p, ull q, ull r) {
 	ull c0 = vec[o], c1 = vec[o + m], c2 = vec[o + 2 * m], c3 = vec[o + 3 * m];
 	ull F = c1, E = c3;
 	M::mulmod(F, p);
@@ -192,7 +180,7 @@ static inline void dit4_butterfly(std::vector<ull> &vec, int o, int m, ull p, ul
 }
 
 template<class M>
-void dif2_ser(std::vector<ull> &vec, int lim, int cn) {
+void dif2_ser(ull * __restrict vec, int lim, int cn) {
 	int i = 1 << (cn - 1), step = i << 1;
 	const ull *twc = M::tw(cn);
 	for(int j = 0; j < lim; j += step)
@@ -205,16 +193,16 @@ void dif2_ser(std::vector<ull> &vec, int lim, int cn) {
 }
 
 template<class M>
-void dif4_ser(std::vector<ull> &vec, int lim, int cn) {
+void dif4_ser(ull * __restrict vec, int lim, int cn) {
 	int m = 1 << (cn - 2), step = m << 2;
-	const ull *twc = M::tw(cn), *twp = M::tw(cn - 1), *twic = M::twim(cn);
+	const ull *tw = M::tw(cn);
 	for(int j = 0; j < lim; j += step)
 		for(int k = 0; k < m; k++)
-			dif4_butterfly<M>(vec, j + k, m, twc[k], twp[k], twic[k]);
+			dif4_butterfly<M>(vec, j + k, m, tw[k], tw[k << 1], tw[k + m]);
 }
 
 template<class M>
-void dit2_ser(std::vector<ull> &vec, int lim, int cn) {
+void dit2_ser(ull * __restrict vec, int lim, int cn) {
 	int i = 1 << (cn - 1), step = i << 1;
 	const ull *itwc = M::itw(cn);
 	for(int j = 0; j < lim; j += step)
@@ -227,146 +215,25 @@ void dit2_ser(std::vector<ull> &vec, int lim, int cn) {
 }
 
 template<class M>
-void dit4_ser(std::vector<ull> &vec, int lim, int cn) {
+void dit4_ser(ull * __restrict vec, int lim, int cn) {
 	int m = 1 << (cn - 2), step = m << 2;
-	const ull *itwc = M::itw(cn), *itwp = M::itw(cn - 1), *itwic = M::itwim(cn);
+	const ull *itw = M::itw(cn);
 	for(int j = 0; j < lim; j += step)
 		for(int k = 0; k < m; k++)
-			dit4_butterfly<M>(vec, j + k, m, itwp[k], itwc[k], itwic[k]);
-}
-
-// ---- OpenMP stages --------------------------------------------------------
-template<class M>
-void dif2_omp(std::vector<ull> &vec, int lim, int cn) {
-	int i = 1 << (cn - 1), step = i << 1;
-	if(cn < TW_MAX) {
-		const ull *twc = M::tw(cn);
-		#pragma omp for
-		for(int j = 0; j < lim; j += step)
-			for(int k = 0; k < i; k++) {
-				ull x = vec[j + k], y = vec[j + i + k];
-				vec[j + k] = M::trim(x + y);
-				vec[j + i + k] = (x >= y ? x - y : x + M::MOD - y);
-				M::mulmod(vec[j + i + k], twc[k]);
-			}
-	} else {
-		ull wn = M::wn(cn);
-		#pragma omp for
-		for(int j = 0; j < lim; j += step) {
-			ull w = M::R;
-			for(int k = 0; k < i; k++, M::mulmod(w, wn)) {
-				ull x = vec[j + k], y = vec[j + i + k];
-				vec[j + k] = M::trim(x + y);
-				vec[j + i + k] = (x >= y ? x - y : x + M::MOD - y);
-				M::mulmod(vec[j + i + k], w);
-			}
-		}
-	}
+			dit4_butterfly<M>(vec, j + k, m, itw[k << 1], itw[k], itw[k + m]);
 }
 
 template<class M>
-void dif4_omp(std::vector<ull> &vec, int lim, int cn) {
-	int m = 1 << (cn - 2), step = m << 2;
-	if(cn < TW_MAX) {
-		const ull *twc = M::tw(cn), *twp = M::tw(cn - 1), *twic = M::twim(cn);
-		#pragma omp for
-		for(int j = 0; j < lim; j += step)
-			for(int k = 0; k < m; k++)
-				dif4_butterfly<M>(vec, j + k, m, twc[k], twp[k], twic[k]);
-	} else {
-		ull W = M::wn(cn), W2 = M::wn(cn - 1), IM = M::im();
-		#pragma omp for
-		for(int j = 0; j < lim; j += step) {
-			ull p = M::R, q = M::R, r = IM;
-			for(int k = 0; k < m; k++) {
-				dif4_butterfly<M>(vec, j + k, m, p, q, r);
-				M::mulmod(p, W), M::mulmod(q, W2), M::mulmod(r, W);
-			}
-		}
-	}
-}
-
-template<class M>
-void dit2_omp(std::vector<ull> &vec, int lim, int cn) {
-	int i = 1 << (cn - 1), step = i << 1;
-	if(cn < TW_MAX) {
-		const ull *itwc = M::itw(cn);
-		#pragma omp for
-		for(int j = 0; j < lim; j += step)
-			for(int k = 0; k < i; k++) {
-				ull x = vec[j + k], y = vec[j + i + k];
-				M::mulmod(y, itwc[k]);
-				vec[j + k] = M::trim(x + y);
-				vec[j + i + k] = (x >= y ? x - y : x + M::MOD - y);
-			}
-	} else {
-		ull wn = M::iwn(cn);
-		#pragma omp for
-		for(int j = 0; j < lim; j += step) {
-			ull w = M::R;
-			for(int k = 0; k < i; k++, M::mulmod(w, wn)) {
-				ull x = vec[j + k], y = vec[j + i + k];
-				M::mulmod(y, w);
-				vec[j + k] = M::trim(x + y);
-				vec[j + i + k] = (x >= y ? x - y : x + M::MOD - y);
-			}
-		}
-	}
-}
-
-template<class M>
-void dit4_omp(std::vector<ull> &vec, int lim, int cn) {
-	int m = 1 << (cn - 2), step = m << 2;
-	if(cn < TW_MAX) {
-		const ull *itwc = M::itw(cn), *itwp = M::itw(cn - 1), *itwic = M::itwim(cn);
-		#pragma omp for
-		for(int j = 0; j < lim; j += step)
-			for(int k = 0; k < m; k++)
-				dit4_butterfly<M>(vec, j + k, m, itwp[k], itwc[k], itwic[k]);
-	} else {
-		ull iW = M::iwn(cn), iW2 = M::iwn(cn - 1), IMI = M::iminv();
-		#pragma omp for
-		for(int j = 0; j < lim; j += step) {
-			ull p = M::R, q = M::R, r = IMI; // p = W^(-2k), q = W^(-k), r = W^(-k) * IM^(-1)
-			for(int k = 0; k < m; k++) {
-				dit4_butterfly<M>(vec, j + k, m, p, q, r);
-				M::mulmod(p, iW2), M::mulmod(q, iW), M::mulmod(r, iW);
-			}
-		}
-	}
-}
-
-// ---- transform drivers ----------------------------------------------------
-template<class M>
-void dif_ser(std::vector<ull> &vec, int lim, int width) {
+void dif_ser(ull * __restrict vec, int lim, int width) {
 	int cn = width;
 	if(width & 1) { dif2_ser<M>(vec, lim, cn); cn--; }
 	for(; cn >= 2; cn -= 2) dif4_ser<M>(vec, lim, cn);
 }
 template<class M>
-void dit_ser(std::vector<ull> &vec, int lim, int width) {
+void dit_ser(ull * __restrict vec, int lim, int width) {
 	int cmax = (width & 1) ? width - 1 : width;
 	for(int cn = 2; cn <= cmax; cn += 2) dit4_ser<M>(vec, lim, cn);
 	if(width & 1) dit2_ser<M>(vec, lim, width);
-}
-// The *_stages drivers below contain `#pragma omp for` worksharing loops and
-// MUST be called from inside an already-active `#pragma omp parallel` region
-// (this lets one parallel region cover a whole multiplication instead of one
-// region per array/transform).
-template<class M>
-void dif_stages(std::vector<ull> &vec, int lim, int width) {
-	int cn = width;
-	if(width & 1) { dif2_omp<M>(vec, lim, cn); cn--; }
-	for(; cn >= 2; cn -= 2) dif4_omp<M>(vec, lim, cn);
-}
-template<class M>
-void dit_stages(std::vector<ull> &vec, int lim, int width) {
-	int cmax = (width & 1) ? width - 1 : width;
-	for(int cn = 2; cn <= cmax; cn += 2) dit4_omp<M>(vec, lim, cn);
-	if(width & 1) dit2_omp<M>(vec, lim, width);
-	ull inv = M::invlim(width); // plain domain: mulmod(x, invlim) = x/2^width
-	#pragma omp for
-	for(int i = 0; i < lim; i++) M::mulmod(vec[i], inv);
 }
 
 // ---- multi-array transforms ------------------------------------------------
@@ -374,10 +241,13 @@ void dit_stages(std::vector<ull> &vec, int lim, int width) {
 // once (with `collapse(2)` over {array, block}).  This widens the parallelism
 // of the early DIF / late DIT stages, which have only a handful of blocks each
 // and would otherwise leave most threads idle.
-struct BufRef { std::vector<ull> *v; bool m2; };
+// m2 selects the modulus; src, when non-null, is the second operand of the
+// pointwise product that is fused into the DIT's tiled pass (src == v gives
+// the in-place square).
+struct BufRef { std::vector<ull> *v; bool m2; std::vector<ull> *src = nullptr; };
 
 template<class M>
-static inline void dif2_block(std::vector<ull> &vec, int j, int i, const ull *twc) {
+static inline void dif2_block(ull * __restrict vec, int j, int i, const ull * __restrict twc) {
 	for(int k = 0; k < i; k++) {
 		ull x = vec[j + k], y = vec[j + i + k];
 		vec[j + k] = M::trim(x + y);
@@ -386,7 +256,7 @@ static inline void dif2_block(std::vector<ull> &vec, int j, int i, const ull *tw
 	}
 }
 template<class M>
-static inline void dif2_block_run(std::vector<ull> &vec, int j, int i, ull wn) {
+static inline void dif2_block_run(ull * __restrict vec, int j, int i, ull wn) {
 	ull w = M::R;
 	for(int k = 0; k < i; k++, M::mulmod(w, wn)) {
 		ull x = vec[j + k], y = vec[j + i + k];
@@ -396,12 +266,14 @@ static inline void dif2_block_run(std::vector<ull> &vec, int j, int i, ull wn) {
 	}
 }
 template<class M>
-static inline void dif4_block(std::vector<ull> &vec, int j, int m, const ull *twc, const ull *twp, const ull *twic) {
+static inline void dif4_block(ull * __restrict vec, int j, int m, const ull * __restrict tw) {
+	// One row serves all three twiddles: W^k = tw[k], W^{2k} = tw[2k]
+	// (W_{cn-1} = W_cn^2) and IM·W^k = W^{k+2^(cn-2)} = tw[k+m].
 	for(int k = 0; k < m; k++)
-		dif4_butterfly<M>(vec, j + k, m, twc[k], twp[k], twic[k]);
+		dif4_butterfly<M>(vec, j + k, m, tw[k], tw[k << 1], tw[k + m]);
 }
 template<class M>
-static inline void dif4_block_run(std::vector<ull> &vec, int j, int m, ull W, ull W2, ull IM) {
+static inline void dif4_block_run(ull * __restrict vec, int j, int m, ull W, ull W2, ull IM) {
 	ull p = M::R, q = M::R, r = IM;
 	for(int k = 0; k < m; k++) {
 		dif4_butterfly<M>(vec, j + k, m, p, q, r);
@@ -409,7 +281,7 @@ static inline void dif4_block_run(std::vector<ull> &vec, int j, int m, ull W, ul
 	}
 }
 template<class M>
-static inline void dit2_block(std::vector<ull> &vec, int j, int i, const ull *itwc) {
+static inline void dit2_block(ull * __restrict vec, int j, int i, const ull * __restrict itwc) {
 	for(int k = 0; k < i; k++) {
 		ull x = vec[j + k], y = vec[j + i + k];
 		M::mulmod(y, itwc[k]);
@@ -418,7 +290,7 @@ static inline void dit2_block(std::vector<ull> &vec, int j, int i, const ull *it
 	}
 }
 template<class M>
-static inline void dit2_block_run(std::vector<ull> &vec, int j, int i, ull wn) {
+static inline void dit2_block_run(ull * __restrict vec, int j, int i, ull wn) {
 	ull w = M::R;
 	for(int k = 0; k < i; k++, M::mulmod(w, wn)) {
 		ull x = vec[j + k], y = vec[j + i + k];
@@ -428,12 +300,14 @@ static inline void dit2_block_run(std::vector<ull> &vec, int j, int i, ull wn) {
 	}
 }
 template<class M>
-static inline void dit4_block(std::vector<ull> &vec, int j, int m, const ull *itwp, const ull *itwc, const ull *itwic) {
+static inline void dit4_block(ull * __restrict vec, int j, int m, const ull * __restrict itw) {
+	// Mirror of dif4_block: W_{cn-1}^{-k} = itw[2k], W^{-k} = itw[k],
+	// IM^{-1}·W^{-k} = W^{-(k+m)} = itw[k+m].
 	for(int k = 0; k < m; k++)
-		dit4_butterfly<M>(vec, j + k, m, itwp[k], itwc[k], itwic[k]);
+		dit4_butterfly<M>(vec, j + k, m, itw[k << 1], itw[k], itw[k + m]);
 }
 template<class M>
-static inline void dit4_block_run(std::vector<ull> &vec, int j, int m, ull iW, ull iW2, ull IMI) {
+static inline void dit4_block_run(ull * __restrict vec, int j, int m, ull iW, ull iW2, ull IMI) {
 	ull p = M::R, q = M::R, r = IMI;
 	for(int k = 0; k < m; k++) {
 		dit4_butterfly<M>(vec, j + k, m, p, q, r);
@@ -447,15 +321,15 @@ static inline void dif2_multi(BufRef *buf, int n, int lim, int cn) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dif2_block<M2>(*buf[a].v, j, i, M2::tw(cn));
-				else dif2_block<M1>(*buf[a].v, j, i, M1::tw(cn));
+				if(buf[a].m2) dif2_block<M2>(buf[a].v->data(), j, i, M2::tw(cn));
+				else dif2_block<M1>(buf[a].v->data(), j, i, M1::tw(cn));
 			}
 	} else {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dif2_block_run<M2>(*buf[a].v, j, i, M2::wn(cn));
-				else dif2_block_run<M1>(*buf[a].v, j, i, M1::wn(cn));
+				if(buf[a].m2) dif2_block_run<M2>(buf[a].v->data(), j, i, M2::wn(cn));
+				else dif2_block_run<M1>(buf[a].v->data(), j, i, M1::wn(cn));
 			}
 	}
 }
@@ -465,15 +339,15 @@ static inline void dif4_multi(BufRef *buf, int n, int lim, int cn) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dif4_block<M2>(*buf[a].v, j, m, M2::tw(cn), M2::tw(cn - 1), M2::twim(cn));
-				else dif4_block<M1>(*buf[a].v, j, m, M1::tw(cn), M1::tw(cn - 1), M1::twim(cn));
+				if(buf[a].m2) dif4_block<M2>(buf[a].v->data(), j, m, M2::tw(cn));
+				else dif4_block<M1>(buf[a].v->data(), j, m, M1::tw(cn));
 			}
 	} else {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dif4_block_run<M2>(*buf[a].v, j, m, M2::wn(cn), M2::wn(cn - 1), M2::im());
-				else dif4_block_run<M1>(*buf[a].v, j, m, M1::wn(cn), M1::wn(cn - 1), M1::im());
+				if(buf[a].m2) dif4_block_run<M2>(buf[a].v->data(), j, m, M2::wn(cn), M2::wn(cn - 1), M2::im());
+				else dif4_block_run<M1>(buf[a].v->data(), j, m, M1::wn(cn), M1::wn(cn - 1), M1::im());
 			}
 	}
 }
@@ -483,15 +357,15 @@ static inline void dit2_multi(BufRef *buf, int n, int lim, int cn) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dit2_block<M2>(*buf[a].v, j, i, M2::itw(cn));
-				else dit2_block<M1>(*buf[a].v, j, i, M1::itw(cn));
+				if(buf[a].m2) dit2_block<M2>(buf[a].v->data(), j, i, M2::itw(cn));
+				else dit2_block<M1>(buf[a].v->data(), j, i, M1::itw(cn));
 			}
 	} else {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dit2_block_run<M2>(*buf[a].v, j, i, M2::iwn(cn));
-				else dit2_block_run<M1>(*buf[a].v, j, i, M1::iwn(cn));
+				if(buf[a].m2) dit2_block_run<M2>(buf[a].v->data(), j, i, M2::iwn(cn));
+				else dit2_block_run<M1>(buf[a].v->data(), j, i, M1::iwn(cn));
 			}
 	}
 }
@@ -501,15 +375,15 @@ static inline void dit4_multi(BufRef *buf, int n, int lim, int cn) {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dit4_block<M2>(*buf[a].v, j, m, M2::itw(cn - 1), M2::itw(cn), M2::itwim(cn));
-				else dit4_block<M1>(*buf[a].v, j, m, M1::itw(cn - 1), M1::itw(cn), M1::itwim(cn));
+				if(buf[a].m2) dit4_block<M2>(buf[a].v->data(), j, m, M2::itw(cn));
+				else dit4_block<M1>(buf[a].v->data(), j, m, M1::itw(cn));
 			}
 	} else {
 		#pragma omp for collapse(2)
 		for(int a = 0; a < n; a++)
 			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dit4_block_run<M2>(*buf[a].v, j, m, M2::iwn(cn), M2::iwn(cn - 1), M2::iminv());
-				else dit4_block_run<M1>(*buf[a].v, j, m, M1::iwn(cn), M1::iwn(cn - 1), M1::iminv());
+				if(buf[a].m2) dit4_block_run<M2>(buf[a].v->data(), j, m, M2::iwn(cn), M2::iwn(cn - 1), M2::iminv());
+				else dit4_block_run<M1>(buf[a].v->data(), j, m, M1::iwn(cn), M1::iwn(cn - 1), M1::iminv());
 			}
 	}
 }
@@ -531,8 +405,8 @@ static inline void dif4_tiled_multi(BufRef *buf, int n, int lim, int cn) {
 			for(int c = cn; c >= 2; c -= 2) {
 				int m = 1 << (c - 2), step = m << 2;
 				for(int j = t; j < tend; j += step) {
-					if(buf[a].m2) dif4_block<M2>(vec, j, m, M2::tw(c), M2::tw(c - 1), M2::twim(c));
-					else dif4_block<M1>(vec, j, m, M1::tw(c), M1::tw(c - 1), M1::twim(c));
+					if(buf[a].m2) dif4_block<M2>(vec.data(), j, m, M2::tw(c));
+					else dif4_block<M1>(vec.data(), j, m, M1::tw(c));
 				}
 			}
 		}
@@ -543,11 +417,27 @@ static inline void dit4_tiled_multi(BufRef *buf, int n, int lim, int cmax) {
 		for(int t = 0; t < lim; t += TILE) {
 			std::vector<ull> &vec = *buf[a].v;
 			int tend = t + TILE > lim ? lim : t + TILE;
+			if(buf[a].src) {
+				// Pointwise product of the two transformed operands, folded
+				// into this pass so the arrays are streamed once less.  The
+				// second operand is converted to Montgomery form on the fly:
+				// mulmod(x, mont(y)) = x*y stays plain.
+				std::vector<ull> &sv = *buf[a].src;
+				if(buf[a].m2) {
+					for(int i = t; i < tend; i++) {
+						ull b = sv[i]; to_mont2(b); mulmod2(vec[i], b);
+					}
+				} else {
+					for(int i = t; i < tend; i++) {
+						ull b = sv[i]; to_mont1(b); mulmod1(vec[i], b);
+					}
+				}
+			}
 			for(int c = 2; c <= cmax; c += 2) {
 				int m = 1 << (c - 2), step = m << 2;
 				for(int j = t; j < tend; j += step) {
-					if(buf[a].m2) dit4_block<M2>(vec, j, m, M2::itw(c - 1), M2::itw(c), M2::itwim(c));
-					else dit4_block<M1>(vec, j, m, M1::itw(c - 1), M1::itw(c), M1::itwim(c));
+					if(buf[a].m2) dit4_block<M2>(vec.data(), j, m, M2::itw(c));
+					else dit4_block<M1>(vec.data(), j, m, M1::itw(c));
 				}
 			}
 		}
@@ -641,11 +531,11 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			// Values stay in plain (non-Montgomery) form throughout: mulmod of
 			// a plain value by a Montgomery-form twiddle yields W*x, i.e. the
 			// Montgomery factors cancel.  The conversion of the second operand
-			// is folded into the pointwise loop and the de-Montgomery into the
-			// DIT scaling, which removes the separate to_mont pass over the
-			// four input arrays.
+			// is folded into the pointwise product, which itself is folded
+			// into the DIT's tiled pass, and the de-Montgomery into the CRT
+			// pass: no separate array sweeps remain between DIF and DIT.
 			BufRef dbuf[4] = {{&v3, false}, {&v4, false}, {&v1, true}, {&v2, true}};
-			BufRef ditbuf[2] = {{&v3, false}, {&v1, true}};
+			BufRef ditbuf[2] = {{&v3, false, &v4}, {&v1, true, &v2}};
 			#pragma omp parallel
 			{
 #ifdef SPEED
@@ -656,13 +546,6 @@ void mul_eq(BigInt &x, BigInt &&y) {
 #ifdef SPEED
 				#pragma omp master
 				{ SPEED_MARK(dif); }
-#endif
-				#pragma omp for
-				for(int i = 0; i < lim; i++) {
-					ull a = v4[i]; to_mont1(a); mulmod1(v3[i], a);
-					ull b = v2[i]; to_mont2(b); mulmod2(v1[i], b);
-				}
-#ifdef SPEED
 				#pragma omp master
 				{ SPEED_MARK(pointwise); }
 #endif
@@ -676,8 +559,8 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			SPEED_TICK(a0);
 			SPEED_TICK(a1);
 			SPEED_ADD(to_mont, a0, a1);
-			dif_ser<M1>(v3, lim, width);
-			dif_ser<M1>(v4, lim, width);
+			dif_ser<M1>(v3.data(), lim, width);
+			dif_ser<M1>(v4.data(), lim, width);
 			SPEED_TICK(a2);
 			SPEED_ADD(dif, a1, a2);
 			SPEED_TICK(a3);
@@ -685,15 +568,15 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			SPEED_TICK(a4);
 			SPEED_ADD(pointwise, a3, a4);
 			SPEED_TICK(a5);
-			dit_ser<M1>(v3, lim, width);
+			dit_ser<M1>(v3.data(), lim, width);
 			SPEED_TICK(a6);
 			SPEED_ADD(dit, a5, a6);
 
 			SPEED_TICK(b0);
 			SPEED_TICK(b1);
 			SPEED_ADD(to_mont, b0, b1);
-			dif_ser<M2>(v1, lim, width);
-			dif_ser<M2>(v2, lim, width);
+			dif_ser<M2>(v1.data(), lim, width);
+			dif_ser<M2>(v2.data(), lim, width);
 			SPEED_TICK(b2);
 			SPEED_ADD(dif, b1, b2);
 			SPEED_TICK(b3);
@@ -701,7 +584,7 @@ void mul_eq(BigInt &x, BigInt &&y) {
 			SPEED_TICK(b4);
 			SPEED_ADD(pointwise, b3, b4);
 			SPEED_TICK(b5);
-			dit_ser<M2>(v1, lim, width);
+			dit_ser<M2>(v1.data(), lim, width);
 			SPEED_TICK(b6);
 			SPEED_ADD(dit, b5, b6);
 		}
@@ -752,7 +635,9 @@ void mul_self_eq(BigInt &x) {
 		std::chrono::steady_clock::time_point tprev = std::chrono::steady_clock::now();
 #endif
 		if(omp) {
-			BufRef dbuf[2] = {{&v1, false}, {&v2, true}};
+			// src == v: the pointwise square is fused into the DIT's tiled
+			// pass (a Montgomery copy of each element supplies the R factor).
+			BufRef dbuf[2] = {{&v1, false, &v1}, {&v2, true, &v2}};
 			#pragma omp parallel
 			{
 #ifdef SPEED
@@ -763,15 +648,6 @@ void mul_self_eq(BigInt &x) {
 #ifdef SPEED
 				#pragma omp master
 				{ SPEED_MARK(dif); }
-#endif
-				// Plain-domain pointwise square: one Montgomery copy supplies
-				// the R factor that mulmod consumes.
-				#pragma omp for
-				for(int i = 0; i < lim; i++) {
-					ull a = v1[i]; to_mont1(a); mulmod1(v1[i], a);
-					ull b = v2[i]; to_mont2(b); mulmod2(v2[i], b);
-				}
-#ifdef SPEED
 				#pragma omp master
 				{ SPEED_MARK(pointwise); }
 #endif
@@ -785,7 +661,7 @@ void mul_self_eq(BigInt &x) {
 			SPEED_TICK(a0);
 			SPEED_TICK(a1);
 			SPEED_ADD(to_mont, a0, a1);
-			dif_ser<M1>(v1, lim, width);
+			dif_ser<M1>(v1.data(), lim, width);
 			SPEED_TICK(a2);
 			SPEED_ADD(dif, a1, a2);
 			SPEED_TICK(a3);
@@ -793,14 +669,14 @@ void mul_self_eq(BigInt &x) {
 			SPEED_TICK(a4);
 			SPEED_ADD(pointwise, a3, a4);
 			SPEED_TICK(a5);
-			dit_ser<M1>(v1, lim, width);
+			dit_ser<M1>(v1.data(), lim, width);
 			SPEED_TICK(a6);
 			SPEED_ADD(dit, a5, a6);
 
 			SPEED_TICK(b0);
 			SPEED_TICK(b1);
 			SPEED_ADD(to_mont, b0, b1);
-			dif_ser<M2>(v2, lim, width);
+			dif_ser<M2>(v2.data(), lim, width);
 			SPEED_TICK(b2);
 			SPEED_ADD(dif, b1, b2);
 			SPEED_TICK(b3);
@@ -808,7 +684,7 @@ void mul_self_eq(BigInt &x) {
 			SPEED_TICK(b4);
 			SPEED_ADD(pointwise, b3, b4);
 			SPEED_TICK(b5);
-			dit_ser<M2>(v2, lim, width);
+			dit_ser<M2>(v2.data(), lim, width);
 			SPEED_TICK(b6);
 			SPEED_ADD(dit, b5, b6);
 		}
