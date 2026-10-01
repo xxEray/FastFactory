@@ -121,6 +121,7 @@ template<> struct Mod<1> {
 	static inline ull iminv() { return im1inv; }
 	static inline ull *tw(int c) { return tw1[c].data(); }
 	static inline ull *itw(int c) { return itw1[c].data(); }
+	static inline ull qpow(ull x, ull y) { return qpow1(x, y); }
 	static inline ull invlim(int w) { return invlim1[w]; }
 	static inline ull invlimf(int w) { return invlim1f[w]; }
 };
@@ -135,6 +136,7 @@ template<> struct Mod<2> {
 	static inline ull iminv() { return im2inv; }
 	static inline ull *tw(int c) { return tw2[c].data(); }
 	static inline ull *itw(int c) { return itw2[c].data(); }
+	static inline ull qpow(ull x, ull y) { return qpow2(x, y); }
 	static inline ull invlim(int w) { return invlim2[w]; }
 	static inline ull invlimf(int w) { return invlim2f[w]; }
 };
@@ -256,29 +258,11 @@ static inline void dif2_block(ull * __restrict vec, int j, int i, const ull * __
 	}
 }
 template<class M>
-static inline void dif2_block_run(ull * __restrict vec, int j, int i, ull wn) {
-	ull w = M::R;
-	for(int k = 0; k < i; k++, M::mulmod(w, wn)) {
-		ull x = vec[j + k], y = vec[j + i + k];
-		vec[j + k] = M::trim(x + y);
-		vec[j + i + k] = (x >= y ? x - y : x + M::MOD - y);
-		M::mulmod(vec[j + i + k], w);
-	}
-}
-template<class M>
 static inline void dif4_block(ull * __restrict vec, int j, int m, const ull * __restrict tw) {
 	// One row serves all three twiddles: W^k = tw[k], W^{2k} = tw[2k]
 	// (W_{cn-1} = W_cn^2) and IM·W^k = W^{k+2^(cn-2)} = tw[k+m].
 	for(int k = 0; k < m; k++)
 		dif4_butterfly<M>(vec, j + k, m, tw[k], tw[k << 1], tw[k + m]);
-}
-template<class M>
-static inline void dif4_block_run(ull * __restrict vec, int j, int m, ull W, ull W2, ull IM) {
-	ull p = M::R, q = M::R, r = IM;
-	for(int k = 0; k < m; k++) {
-		dif4_butterfly<M>(vec, j + k, m, p, q, r);
-		M::mulmod(p, W), M::mulmod(q, W2), M::mulmod(r, W);
-	}
 }
 template<class M>
 static inline void dit2_block(ull * __restrict vec, int j, int i, const ull * __restrict itwc) {
@@ -290,29 +274,74 @@ static inline void dit2_block(ull * __restrict vec, int j, int i, const ull * __
 	}
 }
 template<class M>
-static inline void dit2_block_run(ull * __restrict vec, int j, int i, ull wn) {
-	ull w = M::R;
-	for(int k = 0; k < i; k++, M::mulmod(w, wn)) {
-		ull x = vec[j + k], y = vec[j + i + k];
-		M::mulmod(y, w);
-		vec[j + k] = M::trim(x + y);
-		vec[j + i + k] = (x >= y ? x - y : x + M::MOD - y);
-	}
-}
-template<class M>
 static inline void dit4_block(ull * __restrict vec, int j, int m, const ull * __restrict itw) {
 	// Mirror of dif4_block: W_{cn-1}^{-k} = itw[2k], W^{-k} = itw[k],
 	// IM^{-1}·W^{-k} = W^{-(k+m)} = itw[k+m].
 	for(int k = 0; k < m; k++)
 		dit4_butterfly<M>(vec, j + k, m, itw[k << 1], itw[k], itw[k + m]);
 }
-template<class M>
-static inline void dit4_block_run(ull * __restrict vec, int j, int m, ull iW, ull iW2, ull IMI) {
-	ull p = M::R, q = M::R, r = IMI;
-	for(int k = 0; k < m; k++) {
-		dit4_butterfly<M>(vec, j + k, m, p, q, r);
-		M::mulmod(p, iW2), M::mulmod(q, iW), M::mulmod(r, iW);
+// ---- run-generated stages: shared twiddle runs ----------------------------
+// Stages cn >= TW_MAX have no table row and would otherwise advance three
+// twiddles per butterfly, per (array, block) pair.  The run depends only on k,
+// so it is generated once per k-chunk into thread-local scratch and shared by
+// every array and block of that chunk.  The k-chunk is also the parallel unit
+// here: the widest stages hold a single block per array and would leave most of
+// the team idle.  Building the run ahead of the butterflies (instead of
+// advancing it in the same loop) also removes the loop-carried dependency
+// through p, q, r.
+constexpr int RUN_CHUNK = 1 << 12;
+thread_local std::vector<ull> rp[2], rq[2], rr[2]; // per modulus, per thread
+
+static inline void run_fill1(int mi, int kn, ull w0, ull dw) {
+	std::vector<ull> &w = rp[mi];
+	w.resize(kn);
+	for(int t = 0; t < kn; t++) {
+		w[t] = w0;
+		if(mi) mulmod2(w0, dw); else mulmod1(w0, dw);
 	}
+}
+static inline void run_fill3(int mi, int kn, ull p0, ull q0, ull r0,
+	ull dp, ull dq, ull dr) {
+	std::vector<ull> &p = rp[mi], &q = rq[mi], &r = rr[mi];
+	p.resize(kn), q.resize(kn), r.resize(kn);
+	for(int t = 0; t < kn; t++) {
+		p[t] = p0, q[t] = q0, r[t] = r0;
+		if(mi) mulmod2(p0, dp), mulmod2(q0, dq), mulmod2(r0, dr);
+		else mulmod1(p0, dp), mulmod1(q0, dq), mulmod1(r0, dr);
+	}
+}
+
+template<class M>
+static inline void dif2_seg(ull * __restrict vec, int j, int i, int k0, int kn,
+	const ull * __restrict w) {
+	for(int t = 0; t < kn; t++) {
+		ull x = vec[j + k0 + t], y = vec[j + i + k0 + t];
+		vec[j + k0 + t] = M::trim(x + y);
+		vec[j + i + k0 + t] = (x >= y ? x - y : x + M::MOD - y);
+		M::mulmod(vec[j + i + k0 + t], w[t]);
+	}
+}
+template<class M>
+static inline void dit2_seg(ull * __restrict vec, int j, int i, int k0, int kn,
+	const ull * __restrict w) {
+	for(int t = 0; t < kn; t++) {
+		ull x = vec[j + k0 + t], y = vec[j + i + k0 + t];
+		M::mulmod(y, w[t]);
+		vec[j + k0 + t] = M::trim(x + y);
+		vec[j + i + k0 + t] = (x >= y ? x - y : x + M::MOD - y);
+	}
+}
+template<class M>
+static inline void dif4_seg(ull * __restrict vec, int j, int m, int k0, int kn,
+	const ull * __restrict p, const ull * __restrict q, const ull * __restrict r) {
+	for(int t = 0; t < kn; t++)
+		dif4_butterfly<M>(vec, j + k0 + t, m, p[t], q[t], r[t]);
+}
+template<class M>
+static inline void dit4_seg(ull * __restrict vec, int j, int m, int k0, int kn,
+	const ull * __restrict p, const ull * __restrict q, const ull * __restrict r) {
+	for(int t = 0; t < kn; t++)
+		dit4_butterfly<M>(vec, j + k0 + t, m, p[t], q[t], r[t]);
 }
 
 static inline void dif2_multi(BufRef *buf, int n, int lim, int cn) {
@@ -325,12 +354,22 @@ static inline void dif2_multi(BufRef *buf, int n, int lim, int cn) {
 				else dif2_block<M1>(buf[a].v->data(), j, i, M1::tw(cn));
 			}
 	} else {
-		#pragma omp for collapse(2)
-		for(int a = 0; a < n; a++)
-			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dif2_block_run<M2>(buf[a].v->data(), j, i, M2::wn(cn));
-				else dif2_block_run<M1>(buf[a].v->data(), j, i, M1::wn(cn));
+		bool use[2] = {false, false};
+		for(int a = 0; a < n; a++) use[buf[a].m2] = true;
+		#pragma omp for schedule(static)
+		for(int k0 = 0; k0 < i; k0 += RUN_CHUNK) {
+			int kn = i - k0 < RUN_CHUNK ? i - k0 : RUN_CHUNK;
+			if(use[0]) run_fill1(0, kn, M1::qpow(M1::wn(cn), k0), M1::wn(cn));
+			if(use[1]) run_fill1(1, kn, M2::qpow(M2::wn(cn), k0), M2::wn(cn));
+			for(int a = 0; a < n; a++) {
+				ull *vec = buf[a].v->data();
+				int mi = buf[a].m2;
+				for(int j = 0; j < lim; j += step) {
+					if(mi) dif2_seg<M2>(vec, j, i, k0, kn, rp[1].data());
+					else dif2_seg<M1>(vec, j, i, k0, kn, rp[0].data());
+				}
 			}
+		}
 	}
 }
 static inline void dif4_multi(BufRef *buf, int n, int lim, int cn) {
@@ -343,12 +382,31 @@ static inline void dif4_multi(BufRef *buf, int n, int lim, int cn) {
 				else dif4_block<M1>(buf[a].v->data(), j, m, M1::tw(cn));
 			}
 	} else {
-		#pragma omp for collapse(2)
-		for(int a = 0; a < n; a++)
-			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dif4_block_run<M2>(buf[a].v->data(), j, m, M2::wn(cn), M2::wn(cn - 1), M2::im());
-				else dif4_block_run<M1>(buf[a].v->data(), j, m, M1::wn(cn), M1::wn(cn - 1), M1::im());
+		bool use[2] = {false, false};
+		for(int a = 0; a < n; a++) use[buf[a].m2] = true;
+		#pragma omp for schedule(static)
+		for(int k0 = 0; k0 < m; k0 += RUN_CHUNK) {
+			int kn = m - k0 < RUN_CHUNK ? m - k0 : RUN_CHUNK;
+			// p = W^k, q = W^{2k} = p^2, r = IM*W^k; only p needs a qpow.
+			if(use[0]) {
+				ull p0 = M1::qpow(M1::wn(cn), k0), q0 = p0, r0 = p0;
+				M1::mulmod(q0, p0), M1::mulmod(r0, M1::im());
+				run_fill3(0, kn, p0, q0, r0, M1::wn(cn), M1::wn(cn - 1), M1::wn(cn));
 			}
+			if(use[1]) {
+				ull p0 = M2::qpow(M2::wn(cn), k0), q0 = p0, r0 = p0;
+				M2::mulmod(q0, p0), M2::mulmod(r0, M2::im());
+				run_fill3(1, kn, p0, q0, r0, M2::wn(cn), M2::wn(cn - 1), M2::wn(cn));
+			}
+			for(int a = 0; a < n; a++) {
+				ull *vec = buf[a].v->data();
+				int mi = buf[a].m2;
+				for(int j = 0; j < lim; j += step) {
+					if(mi) dif4_seg<M2>(vec, j, m, k0, kn, rp[1].data(), rq[1].data(), rr[1].data());
+					else dif4_seg<M1>(vec, j, m, k0, kn, rp[0].data(), rq[0].data(), rr[0].data());
+				}
+			}
+		}
 	}
 }
 static inline void dit2_multi(BufRef *buf, int n, int lim, int cn) {
@@ -361,12 +419,22 @@ static inline void dit2_multi(BufRef *buf, int n, int lim, int cn) {
 				else dit2_block<M1>(buf[a].v->data(), j, i, M1::itw(cn));
 			}
 	} else {
-		#pragma omp for collapse(2)
-		for(int a = 0; a < n; a++)
-			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dit2_block_run<M2>(buf[a].v->data(), j, i, M2::iwn(cn));
-				else dit2_block_run<M1>(buf[a].v->data(), j, i, M1::iwn(cn));
+		bool use[2] = {false, false};
+		for(int a = 0; a < n; a++) use[buf[a].m2] = true;
+		#pragma omp for schedule(static)
+		for(int k0 = 0; k0 < i; k0 += RUN_CHUNK) {
+			int kn = i - k0 < RUN_CHUNK ? i - k0 : RUN_CHUNK;
+			if(use[0]) run_fill1(0, kn, M1::qpow(M1::iwn(cn), k0), M1::iwn(cn));
+			if(use[1]) run_fill1(1, kn, M2::qpow(M2::iwn(cn), k0), M2::iwn(cn));
+			for(int a = 0; a < n; a++) {
+				ull *vec = buf[a].v->data();
+				int mi = buf[a].m2;
+				for(int j = 0; j < lim; j += step) {
+					if(mi) dit2_seg<M2>(vec, j, i, k0, kn, rp[1].data());
+					else dit2_seg<M1>(vec, j, i, k0, kn, rp[0].data());
+				}
 			}
+		}
 	}
 }
 static inline void dit4_multi(BufRef *buf, int n, int lim, int cn) {
@@ -379,12 +447,31 @@ static inline void dit4_multi(BufRef *buf, int n, int lim, int cn) {
 				else dit4_block<M1>(buf[a].v->data(), j, m, M1::itw(cn));
 			}
 	} else {
-		#pragma omp for collapse(2)
-		for(int a = 0; a < n; a++)
-			for(int j = 0; j < lim; j += step) {
-				if(buf[a].m2) dit4_block_run<M2>(buf[a].v->data(), j, m, M2::iwn(cn), M2::iwn(cn - 1), M2::iminv());
-				else dit4_block_run<M1>(buf[a].v->data(), j, m, M1::iwn(cn), M1::iwn(cn - 1), M1::iminv());
+		bool use[2] = {false, false};
+		for(int a = 0; a < n; a++) use[buf[a].m2] = true;
+		#pragma omp for schedule(static)
+		for(int k0 = 0; k0 < m; k0 += RUN_CHUNK) {
+			int kn = m - k0 < RUN_CHUNK ? m - k0 : RUN_CHUNK;
+			// p = W^{-2k} = q^2, q = W^{-k}, r = IM^{-1}*W^{-k}.
+			if(use[0]) {
+				ull q0 = M1::qpow(M1::iwn(cn), k0), p0 = q0, r0 = q0;
+				M1::mulmod(p0, q0), M1::mulmod(r0, M1::iminv());
+				run_fill3(0, kn, p0, q0, r0, M1::iwn(cn - 1), M1::iwn(cn), M1::iwn(cn));
 			}
+			if(use[1]) {
+				ull q0 = M2::qpow(M2::iwn(cn), k0), p0 = q0, r0 = q0;
+				M2::mulmod(p0, q0), M2::mulmod(r0, M2::iminv());
+				run_fill3(1, kn, p0, q0, r0, M2::iwn(cn - 1), M2::iwn(cn), M2::iwn(cn));
+			}
+			for(int a = 0; a < n; a++) {
+				ull *vec = buf[a].v->data();
+				int mi = buf[a].m2;
+				for(int j = 0; j < lim; j += step) {
+					if(mi) dit4_seg<M2>(vec, j, m, k0, kn, rp[1].data(), rq[1].data(), rr[1].data());
+					else dit4_seg<M1>(vec, j, m, k0, kn, rp[0].data(), rq[0].data(), rr[0].data());
+				}
+			}
+		}
 	}
 }
 // ---- cache-tiled small stages --------------------------------------------
