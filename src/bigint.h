@@ -261,7 +261,14 @@ template<class M>
 static inline void dif4_block(ull * __restrict vec, int j, int m, const ull * __restrict tw) {
 	// One row serves all three twiddles: W^k = tw[k], W^{2k} = tw[2k]
 	// (W_{cn-1} = W_cn^2) and IM·W^k = W^{k+2^(cn-2)} = tw[k+m].
-	for(int k = 0; k < m; k++)
+	int k = 0;
+	for(; k + 3 < m; k += 4) {
+		dif4_butterfly<M>(vec, j + k, m, tw[k], tw[k << 1], tw[k + m]);
+		dif4_butterfly<M>(vec, j + k + 1, m, tw[k + 1], tw[(k + 1) << 1], tw[k + 1 + m]);
+		dif4_butterfly<M>(vec, j + k + 2, m, tw[k + 2], tw[(k + 2) << 1], tw[k + 2 + m]);
+		dif4_butterfly<M>(vec, j + k + 3, m, tw[k + 3], tw[(k + 3) << 1], tw[k + 3 + m]);
+	}
+	for(; k < m; k++)
 		dif4_butterfly<M>(vec, j + k, m, tw[k], tw[k << 1], tw[k + m]);
 }
 template<class M>
@@ -277,7 +284,14 @@ template<class M>
 static inline void dit4_block(ull * __restrict vec, int j, int m, const ull * __restrict itw) {
 	// Mirror of dif4_block: W_{cn-1}^{-k} = itw[2k], W^{-k} = itw[k],
 	// IM^{-1}·W^{-k} = W^{-(k+m)} = itw[k+m].
-	for(int k = 0; k < m; k++)
+	int k = 0;
+	for(; k + 3 < m; k += 4) {
+		dit4_butterfly<M>(vec, j + k, m, itw[k << 1], itw[k], itw[k + m]);
+		dit4_butterfly<M>(vec, j + k + 1, m, itw[(k + 1) << 1], itw[k + 1], itw[k + 1 + m]);
+		dit4_butterfly<M>(vec, j + k + 2, m, itw[(k + 2) << 1], itw[k + 2], itw[k + 2 + m]);
+		dit4_butterfly<M>(vec, j + k + 3, m, itw[(k + 3) << 1], itw[k + 3], itw[k + 3 + m]);
+	}
+	for(; k < m; k++)
 		dit4_butterfly<M>(vec, j + k, m, itw[k << 1], itw[k], itw[k + m]);
 }
 // ---- run-generated stages: shared twiddle runs ----------------------------
@@ -334,13 +348,27 @@ static inline void dit2_seg(ull * __restrict vec, int j, int i, int k0, int kn,
 template<class M>
 static inline void dif4_seg(ull * __restrict vec, int j, int m, int k0, int kn,
 	const ull * __restrict p, const ull * __restrict q, const ull * __restrict r) {
-	for(int t = 0; t < kn; t++)
+	int t = 0;
+	for(; t + 3 < kn; t += 4) {
+		dif4_butterfly<M>(vec, j + k0 + t, m, p[t], q[t], r[t]);
+		dif4_butterfly<M>(vec, j + k0 + t + 1, m, p[t + 1], q[t + 1], r[t + 1]);
+		dif4_butterfly<M>(vec, j + k0 + t + 2, m, p[t + 2], q[t + 2], r[t + 2]);
+		dif4_butterfly<M>(vec, j + k0 + t + 3, m, p[t + 3], q[t + 3], r[t + 3]);
+	}
+	for(; t < kn; t++)
 		dif4_butterfly<M>(vec, j + k0 + t, m, p[t], q[t], r[t]);
 }
 template<class M>
 static inline void dit4_seg(ull * __restrict vec, int j, int m, int k0, int kn,
 	const ull * __restrict p, const ull * __restrict q, const ull * __restrict r) {
-	for(int t = 0; t < kn; t++)
+	int t = 0;
+	for(; t + 3 < kn; t += 4) {
+		dit4_butterfly<M>(vec, j + k0 + t, m, p[t], q[t], r[t]);
+		dit4_butterfly<M>(vec, j + k0 + t + 1, m, p[t + 1], q[t + 1], r[t + 1]);
+		dit4_butterfly<M>(vec, j + k0 + t + 2, m, p[t + 2], q[t + 2], r[t + 2]);
+		dit4_butterfly<M>(vec, j + k0 + t + 3, m, p[t + 3], q[t + 3], r[t + 3]);
+	}
+	for(; t < kn; t++)
 		dit4_butterfly<M>(vec, j + k0 + t, m, p[t], q[t], r[t]);
 }
 
